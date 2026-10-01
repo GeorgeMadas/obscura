@@ -19,7 +19,7 @@ OPEN_BUTTON_TOKEN=1
 JUPYTER_DIR=/
 DATA_DIRECTORY=/workspace/
 PORTAL_CONFIG=localhost:1111:11111:/:Instance Portal|localhost:8080:18080:/:Jupyter|localhost:8080:8080:/terminals/1:Jupyter Terminal|localhost:8384:18384:/:Syncthing|localhost:6006:16006:/:Tensorboard|localhost:10100:17860:/:Qwen Image
-QWEN_REPO=<github-user>/<repo>
+QWEN_REPO=GeorgeMadas/obscura
 GITHUB_TOKEN=<fine-grained PAT, Contents: read & write on that repo>
 ```
 
