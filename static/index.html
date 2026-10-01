@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0A0A0B">
+  <title>Obscura</title>
+  <meta name="description" content="Obscura, an image studio for Qwen Image 2.1.">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="preload" href="/static/vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/vendor/phosphor/regular.css">
+  <link rel="stylesheet" href="/static/vendor/phosphor/fill.css">
+  <link rel="stylesheet" href="/static/styles.css?v=18">
+</head>
+<body>
+  <!-- Reusable brand mark -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="mark" viewBox="0 0 40 40">
+      <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" stroke-width="2.25"/>
+      <path d="M20 5a15 15 0 0 1 0 30z" fill="currentColor"/>
+      <circle cx="20" cy="20" r="5.25" fill="var(--bg)"/>
+      <circle class="mark-pinhole" cx="20" cy="20" r="3.1" fill="var(--accent)"/>
+    </symbol>
+  </svg>
+
+  <div class="app" id="app" data-view="create">
+    <!-- Navigation rail (bottom tab bar on phones) -->
+    <nav class="rail" aria-label="Main">
+      <a class="rail-brand" href="#/create" aria-label="Obscura home">
+        <svg class="mark" aria-hidden="true"><use href="#mark"/></svg>
+      </a>
+      <div class="rail-nav" role="list">
+        <a class="rail-link" href="#/create" data-nav="create" role="listitem">
+          <i class="ph ph-aperture" aria-hidden="true"></i><span>Create</span>
+        </a>
+        <a class="rail-link" href="#/library" data-nav="library" role="listitem">
+          <i class="ph ph-squares-four" aria-hidden="true"></i><span>Library</span>
+        </a>
+        <a class="rail-link" href="#/styles" data-nav="styles" role="listitem">
+          <i class="ph ph-swatches" aria-hidden="true"></i><span>Styles</span>
+        </a>
+        <a class="rail-link" href="#/prompts" data-nav="prompts" role="listitem">
+          <i class="ph ph-bookmarks-simple" aria-hidden="true"></i><span>Prompts</span>
+        </a>
+      </div>
+      <div class="rail-foot">
+        <button class="queue-pill" id="queuePill" type="button" hidden aria-live="polite">
+          <span class="queue-ring"></span><span id="queueCount">0</span>
+        </button>
+        <button class="icon-btn" id="shortcutsBtn" type="button" aria-label="Keyboard shortcuts" data-tip="Shortcuts">
+          <i class="ph ph-keyboard"></i>
+        </button>
+      </div>
+    </nav>
+
+    <!-- ===================== CREATE ===================== -->
+    <main class="view view-create" id="view-create" aria-label="Create">
+      <header class="topbar">
+        <div class="brandline">
+          <span class="wordmark">Obscura</span>
+          <span class="model-tag" id="modelTag">Qwen Image 2.1</span>
+        </div>
+        <div class="segmented" id="modeSwitch" role="tablist" aria-label="Mode"></div>
+        <button class="icon-btn settings-toggle" id="settingsToggle" type="button" aria-label="Show settings" data-tip="Show settings">
+          <i class="ph ph-sliders-horizontal"></i>
+        </button>
+      </header>
+
+      <section class="feed" id="feed" aria-label="Your renders">
+        <div class="stage-empty" id="stageEmpty" hidden>
+          <svg class="mark mark-xl" aria-hidden="true"><use href="#mark"/></svg>
+          <h1>What should we develop?</h1>
+          <p>Describe a scene, pick a style, and Obscura renders it on your GPU.</p>
+          <div class="idea-chips" id="ideaChips"></div>
+        </div>
+        <div class="feed-grid" id="feedGrid" aria-live="polite"></div>
+        <div class="sentinel" id="feedSentinel"></div>
+      </section>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="refs" id="refs" hidden></div>
+        <div class="composer-row">
+          <label class="sr-only" for="prompt">Prompt</label>
+          <textarea id="prompt" rows="1" placeholder="A lighthouse at blue hour, fog rolling over black rocks…" maxlength="4000"></textarea>
+          <div class="composer-side">
+            <button class="icon-btn mobile-only" id="settingsToggle2" type="button" aria-label="Settings"><i class="ph ph-sliders-horizontal"></i></button>
+            <button class="btn btn-primary" id="generateBtn" type="submit">
+              <span>Generate</span><kbd class="kbd-hint">↵</kbd>
+            </button>
+          </div>
+        </div>
+      </form>
+    </main>
+
+    <!-- Settings inspector -->
+    <aside class="inspector" id="inspector" aria-label="Settings">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="inspector-head">
+        <h2>Settings</h2>
+        <button class="icon-btn inspector-collapse" id="inspectorCollapse" type="button" aria-label="Collapse settings" data-tip="Collapse"><i class="ph ph-sidebar-simple"></i></button>
+        <button class="icon-btn" id="inspectorClose" type="button" aria-label="Close settings"><i class="ph ph-x"></i></button>
+      </div>
+      <div class="inspector-body">
+        <section class="field">
+          <div class="field-label"><span>Model</span><span class="val" id="modelVal"></span></div>
+          <div class="model-opts" id="modelOpts" role="radiogroup" aria-label="Model"></div>
+          <div class="model-status" id="modelStatus" hidden></div>
+        </section>
+
+        <section class="field">
+          <div class="field-label"><span>Style</span><a href="#/styles?pick=1" class="link-sm">Browse</a></div>
+          <button class="style-current" id="styleCurrent" type="button"></button>
+          <div class="custom-lora" id="customLora" hidden>
+            <label class="input-label" for="customRepo">Hugging Face repo</label>
+            <input class="input" id="customRepo" placeholder="owner/repository" spellcheck="false">
+            <label class="input-label" for="customFile">Weights file</label>
+            <input class="input" id="customFile" placeholder="lora.safetensors" spellcheck="false">
+          </div>
+          <div class="custom-lora" id="localLora" hidden>
+            <label class="input-label" for="localLoraInput">File in <code id="loraDir"></code></label>
+            <div class="input-row">
+              <input class="input" id="localLoraInput" list="localLoraList" placeholder="my-style.safetensors" spellcheck="false">
+              <button class="icon-btn" id="refreshLoras" type="button" aria-label="Rescan folder" data-tip="Rescan"><i class="ph ph-arrows-clockwise"></i></button>
+            </div>
+            <datalist id="localLoraList"></datalist>
+          </div>
+        </section>
+
+        <section class="field" id="strengthField">
+          <div class="field-label"><label for="strength">Style strength</label><output class="val" id="strengthVal"></output></div>
+          <input type="range" class="range" id="strength" min="0" max="1.5" step="0.05">
+        </section>
+
+        <section class="field">
+          <div class="field-label"><span>Resolution</span></div>
+          <div class="pair" id="resOpts" role="radiogroup" aria-label="Resolution"></div>
+          <p class="hint" id="resHint"></p>
+        </section>
+
+        <section class="field">
+          <div class="field-label"><span>Aspect ratio</span><span class="val" id="ratioVal"></span></div>
+          <div class="ratios" id="ratios" role="radiogroup" aria-label="Aspect ratio"></div>
+        </section>
+
+        <section class="field">
+          <div class="field-label"><label for="steps">Steps</label><output class="val" id="stepsVal"></output></div>
+          <input type="range" class="range" id="steps" min="4" max="40" step="1">
+          <div class="range-marks"><span>Draft</span><span>Balanced</span><span>Detailed</span></div>
+          <p class="hint" id="stepsHint"></p>
+        </section>
+
+        <section class="field">
+          <div class="field-label"><label for="seed">Seed</label>
+            <button class="toggle" id="seedLock" type="button" aria-pressed="false">
+              <i class="ph ph-dice-five"></i><span>Random</span>
+            </button>
+          </div>
+          <div class="input-row">
+            <input class="input mono" id="seed" inputmode="numeric" spellcheck="false">
+            <button class="icon-btn" id="seedDice" type="button" aria-label="New random seed" data-tip="Roll"><i class="ph ph-arrows-clockwise"></i></button>
+          </div>
+        </section>
+
+        <section class="field" id="batchField">
+          <div class="field-label"><span>Images per click</span><output class="val" id="batchVal"></output></div>
+          <div class="counts" id="batchOpts" role="radiogroup" aria-label="Images per click"></div>
+          <p class="hint" id="batchHint"></p>
+        </section>
+      </div>
+      <div class="inspector-foot">
+        <span class="engine" id="engineInfo"></span>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <!-- ===================== LIBRARY ===================== -->
+    <main class="view view-library" id="view-library" aria-label="Library" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Library</h1>
+          <p class="sub" id="libraryCount">Everything you have rendered on this machine.</p>
+        </div>
+        <label class="search">
+          <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
+          <span class="sr-only">Search prompts</span>
+          <input id="librarySearch" type="search" placeholder="Search prompts and styles">
+          <kbd>/</kbd>
+        </label>
+      </header>
+      <div class="masonry" id="masonry"></div>
+      <div class="library-empty" id="libraryEmpty" hidden>
+        <svg class="mark mark-lg" aria-hidden="true"><use href="#mark"/></svg>
+        <h2>Nothing here yet</h2>
+        <p>Your renders land here automatically, newest first.</p>
+        <a class="btn btn-primary" href="#/create">Start creating</a>
+      </div>
+      <div class="sentinel" id="librarySentinel"></div>
+    </main>
+
+    <!-- ===================== STYLES ===================== -->
+    <main class="view view-styles" id="view-styles" aria-label="Styles" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Styles</h1>
+          <p class="sub">LoRA adapters that change how Qwen renders. Each downloads once, on first use.</p>
+        </div>
+      </header>
+      <div class="filters" id="styleFilters" role="tablist" aria-label="Style categories"></div>
+      <div class="style-grid" id="styleGrid"></div>
+    </main>
+
+    <!-- ===================== PROMPTS ===================== -->
+    <main class="view view-prompts" id="view-prompts" aria-label="Prompts" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Prompts</h1>
+          <p class="sub">Prompts you use often. Copy one, or send it straight to Create.</p>
+        </div>
+        <button class="btn btn-primary" id="promptNew" type="button"><i class="ph ph-plus"></i>Save a prompt</button>
+      </header>
+      <form class="prompt-editor" id="promptEditor" autocomplete="off" hidden>
+        <label class="input-label" for="promptTitle">Title</label>
+        <input class="input" id="promptTitle" maxlength="120" placeholder="Golden hour portrait" required>
+        <label class="input-label" for="promptText">Prompt</label>
+        <textarea class="input prompt-text-input" id="promptText" rows="6" maxlength="4000" placeholder="The full prompt you want to reuse" required></textarea>
+        <div class="prompt-editor-actions">
+          <button class="btn btn-ghost btn-sm" id="promptCancel" type="button">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="promptSave" type="submit">Save prompt</button>
+        </div>
+      </form>
+      <div class="prompt-list" id="promptList"></div>
+      <div class="library-empty" id="promptsEmpty" hidden>
+        <i class="ph ph-bookmarks-simple empty-icon" aria-hidden="true"></i>
+        <h2>No saved prompts yet</h2>
+        <p>Save the prompts you reach for often, with a title so they're easy to find.</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Lightbox -->
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Image details" hidden>
+    <div class="lb-stage" id="lbStage">
+      <button class="icon-btn lb-nav lb-prev" id="lbPrev" aria-label="Previous"><i class="ph ph-caret-left"></i></button>
+      <div class="lb-layer" id="lbLayer">
+        <img id="lbBefore" alt="" hidden>
+        <img id="lbImg" alt="">
+      </div>
+      <div class="lb-divider" id="lbDivider" hidden>
+        <button class="lb-handle" id="lbHandle" type="button" role="slider" aria-label="Drag to compare" aria-valuemin="0" aria-valuemax="100"><i class="ph ph-arrows-left-right"></i></button>
+      </div>
+      <div class="lb-side lb-side-left" id="lbBeforePick" role="radiogroup" aria-label="Compare against" hidden></div>
+      <div class="lb-side lb-side-right" id="lbAfterLabel" hidden></div>
+      <button class="icon-btn lb-nav lb-next" id="lbNext" aria-label="Next"><i class="ph ph-caret-right"></i></button>
+      <div class="lb-zoom" id="lbZoom" aria-live="polite"></div>
+    </div>
+    <aside class="lb-panel">
+      <div class="lb-top">
+        <span class="lb-date" id="lbDate"></span>
+        <button class="icon-btn" id="lbClose" aria-label="Close"><i class="ph ph-x"></i></button>
+      </div>
+      <dl class="lb-specs" id="lbSpecs"></dl>
+      <div class="lb-prompt-wrap">
+        <span class="field-label">Prompt</span>
+        <p class="lb-prompt" id="lbPrompt"></p>
+        <div class="lb-prompt-tools">
+          <button class="link-sm open" id="lbMore" type="button" hidden><i class="ph ph-caret-down"></i><span>Collapse prompt</span></button>
+          <button class="link-sm" id="lbCopy" type="button"><i class="ph ph-copy"></i>Copy prompt</button>
+        </div>
+      </div>
+      <button class="toggle lb-compare-toggle" id="lbCompareToggle" type="button" aria-pressed="true" hidden><i class="ph ph-split-horizontal"></i><span>Before / after slider</span></button>
+      <div class="lb-actions">
+        <button class="btn btn-primary" id="lbReuse" type="button"><i class="ph ph-arrow-counter-clockwise"></i>Reuse settings</button>
+        <div class="lb-upscale" id="lbUpscale">
+          <span class="field-label">Upscale 4x</span>
+          <div class="lb-row">
+            <button class="btn btn-quiet" type="button" data-up="realesrgan"><i class="ph ph-arrows-out"></i>Real-ESRGAN</button>
+            <button class="btn btn-quiet" type="button" data-up="ultrasharp"><i class="ph ph-arrows-out"></i>UltraSharp</button>
+          </div>
+        </div>
+        <div class="lb-enhance" id="lbEnhanceBox">
+          <div class="field-label"><label for="enhStrength">Enhance detail</label><output class="val" id="enhVal">0.30</output></div>
+          <input type="range" class="range" id="enhStrength" min="0.15" max="0.6" step="0.05" value="0.3">
+          <div class="range-marks"><span>Subtle</span><span>Strong</span></div>
+          <p class="hint" id="enhHint"></p>
+          <div class="field-label"><label for="enhPrompt">Enhance prompt</label><button class="link-sm" id="enhAddOriginal" type="button"><i class="ph ph-plus"></i>Add original prompt</button></div>
+          <textarea class="input enh-prompt" id="enhPrompt" rows="2" spellcheck="false"></textarea>
+          <button class="btn btn-quiet" id="lbEnhanceBtn" type="button"><i class="ph ph-sparkle"></i>Enhance detail</button>
+        </div>
+        <div class="lb-row">
+          <button class="btn btn-quiet" id="lbEdit" type="button"><i class="ph ph-paint-brush-broad"></i>Edit</button>
+          <a class="btn btn-quiet" id="lbDownload" download><i class="ph ph-download-simple"></i>Download</a>
+        </div>
+        <button class="btn btn-danger-ghost" id="lbDelete" type="button"><i class="ph ph-trash"></i><span>Delete</span></button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Shortcuts -->
+  <div class="modal" id="shortcuts" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><h2 id="shortcutsTitle">Keyboard shortcuts</h2>
+        <button class="icon-btn" data-close aria-label="Close"><i class="ph ph-x"></i></button></div>
+      <ul class="keys">
+        <li><span>Generate</span><span><kbd>Enter</kbd></span></li>
+        <li><span>New line in prompt</span><span><kbd>Shift</kbd><kbd>Enter</kbd></span></li>
+        <li><span>Focus prompt or search</span><span><kbd>/</kbd></span></li>
+        <li><span>Create, Library, Styles, Prompts</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></span></li>
+        <li><span>Browse in full view</span><span><kbd>←</kbd><kbd>→</kbd></span></li>
+        <li><span>Zoom in full view</span><span><kbd>Scroll</kbd> or <kbd>+</kbd><kbd>-</kbd></span></li>
+        <li><span>Fit to screen</span><span><kbd>0</kbd></span></li>
+        <li><span>Show or hide settings</span><span><kbd>\</kbd></span></li>
+        <li><span>Select images</span><span><kbd>Ctrl</kbd>+click, <kbd>Shift</kbd>+click</span></li>
+        <li><span>Close or clear selection</span><span><kbd>Esc</kbd></span></li>
+        <li><span>Paste an image as reference</span><span><kbd>Ctrl</kbd><kbd>V</kbd></span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="dropzone" id="dropzone" hidden>
+    <div class="dropzone-card">
+      <i class="ph ph-image-square"></i>
+      <strong>Drop to use as reference</strong>
+      <span>Obscura switches to Edit or Blend for you.</span>
+    </div>
+  </div>
+
+  <div class="sel-bar" id="selBar" role="toolbar" aria-label="Selected images" hidden>
+    <span class="sel-count" id="selCount">0 selected</span>
+    <button class="btn btn-quiet btn-sm" id="selDownload" type="button"><i class="ph ph-download-simple"></i>Download</button>
+    <button class="btn btn-danger-ghost btn-sm" id="selDelete" type="button"><i class="ph ph-trash"></i><span>Delete</span></button>
+    <button class="icon-btn" id="selClear" type="button" aria-label="Clear selection" title="Clear selection (Esc)"><i class="ph ph-x"></i></button>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <input type="file" id="filePicker" accept="image/*" hidden>
+  <script src="/static/app.js?v=19" defer></script>
+</body>
+</html>

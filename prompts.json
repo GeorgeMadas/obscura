@@ -1,0 +1,8 @@
+[
+  {
+    "id": "f9ec58692540",
+    "title": "Identity Replacement",
+    "prompt": "HARD IDENTITY REPLACEMENT PROMPT\n\nTask: Replace the person in Image B with the person from Image A. This is a full identity replacement, not a blend.\n\nSOURCE (PROMPT ONLY)\nImage A: Use Image A as the ONLY source for identity; face shape, skin tone & texture, hair. DO NOT average or mix with Image B. Preserve the exact identity from Image A.\n\nTARGET USAGE (Image B)\nUse Image B ONLY for: pose and body position, full body proportions, camera angle & framing, lighting and shadows, clothing and fabric, background and environment. DO NOT use Image B for identity.\n\nHARD REPLACEMENT RULES\nCompletely replace the person in Image B. Ignore facial features of Image B. No identity blending. No face mixing.\n\nCLOTHING ADAPTATION\nKeep clothing & body proportions of Image B. Preserve fabric physics and realism.\n\nSTRICT CONSTRAINTS\nNo identity blending\nNo face mixing\nNo stylization\nNo beauty filtering\nNo anatomy changes\nPhotorealistic result only",
+    "created": 1790858466.0303252
+  }
+]

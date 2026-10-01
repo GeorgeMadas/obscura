@@ -1,0 +1,9 @@
+# Per-instance data
+outputs/
+history.jsonl
+__pycache__/
+# Weights are downloaded at provision time
+upscalers/*.pth
+upscalers/*.safetensors
+loras/*
+!loras/.gitkeep

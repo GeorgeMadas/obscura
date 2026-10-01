@@ -1,0 +1,1 @@
+- [No test generations](no-test-generations.md) — never render/upscale to test the Obscura app; user does testing

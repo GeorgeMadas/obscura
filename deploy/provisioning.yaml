@@ -1,0 +1,46 @@
+# First-boot setup for the Qwen Image (Obscura) template.
+# Fetched to /provisioning.yaml by the template's on-start script; needs template env vars
+# QWEN_REPO (e.g. "user/repo") and GITHUB_TOKEN (fine-grained PAT with Contents access to that repo).
+
+version: 1
+
+on_failure:
+  action: continue
+  max_retries: 3
+  retry_delay: 30
+
+write_files:
+  # Lets git authenticate to GitHub with $GITHUB_TOKEN at runtime, so the token never lands in a URL or log
+  - path: /etc/gitconfig
+    content: |
+      [credential "https://github.com"]
+          helper = "!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f"
+    permissions: "0644"
+
+git_repos:
+  - url: "https://github.com/${QWEN_REPO}.git"
+    dest: "${WORKSPACE:-/workspace}/qwen-image"
+    pull_if_exists: true
+    post_commands:
+      - "uv pip install --no-cache --python /venv/main/bin/python -r deploy/requirements.txt"
+
+downloads:
+  - url: https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.safetensors
+    dest: "${WORKSPACE:-/workspace}/qwen-image/upscalers/4x-UltraSharp.safetensors"
+  - url: https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
+    dest: "${WORKSPACE:-/workspace}/qwen-image/upscalers/RealESRGAN_x4plus.pth"
+
+services:
+  - name: qwen-image
+    portal_search_term: "Qwen Image"
+    workdir: "${WORKSPACE:-/workspace}/qwen-image"
+    command: "pty python app.py 2>&1"
+    wait_for_provisioning: true
+
+post_commands:
+  # Model weights (~32 GB) into $HF_HOME before the app's first start
+  - "cd ${WORKSPACE:-/workspace}/qwen-image && /venv/main/bin/python deploy/prefetch_models.py"
+  # Claude Code plus settings, memory and skills
+  - ". /opt/nvm/nvm.sh && npm install -g @anthropic-ai/claude-code"
+  - "mkdir -p /root/.claude/projects/-workspace/memory /root/.claude/skills"
+  - "cd ${WORKSPACE:-/workspace}/qwen-image/deploy/claude && cp -n settings.json /root/.claude/ && cp -n memory/*.md /root/.claude/projects/-workspace/memory/ && cp -rn skills/* /root/.claude/skills/"
