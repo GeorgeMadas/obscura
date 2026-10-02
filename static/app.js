@@ -587,9 +587,11 @@
   }
 
   // ---------------------------------------------------------------- generation
-  async function generate({ seedOverride } = {}) {
-    const prompt = $("#prompt").value.trim();
-    const need = S.mode === BLEND ? Math.min(S.refs.length, maxRefs()) : maxRefs();
+  // rewrite: route the composer prompt through the Qwen rewriter popup first (only the composer asks for this)
+  // prompt/original: set when the popup confirms a rewritten prompt
+  async function generate({ seedOverride, rewrite = false, prompt: confirmed, original = "", refs = S.refs } = {}) {
+    const prompt = (confirmed ?? $("#prompt").value).trim();
+    const need = S.mode === BLEND ? Math.min(refs.length, maxRefs()) : maxRefs();
     const composer = $("#composer");
     const fail = (msg) => {
       composer.classList.remove("shake"); void composer.offsetWidth; composer.classList.add("shake");
@@ -597,16 +599,18 @@
     };
     if (!prompt) { $("#prompt").focus(); return fail("Describe what you want to see first."); }
     if (S.mode === BLEND && need < 2) return fail("Blend needs at least two reference images.");
-    for (let i = 0; i < need; i++) if (!S.refs[i]) return fail("Add the image you want to edit.");
+    for (let i = 0; i < need; i++) if (!refs[i]) return fail("Add the image you want to edit.");
     if (S.lora === S.cfg.custom_lora && (!$("#customRepo").value.trim() || !$("#customFile").value.trim())) {
       focusField("#customRepo"); return fail("Enter the Hugging Face repo and weights file.");
     }
     if (S.lora === S.cfg.local_lora && !$("#localLoraInput").value.trim()) { focusField("#localLoraInput"); return fail("Pick a local LoRA file."); }
 
+    if (rewrite && S.rewriteOn && !RW.done.has(prompt)) return openRewrite(prompt, need, seedOverride);
+
     const random = seedOverride == null && !S.seedLocked;
     const count = random ? S.batch : 1;
     const params = {
-      prompt, mode: S.mode, ratio: S.ratio, resolution: S.res, steps: S.steps, lora: S.lora, lora_strength: S.strength,
+      prompt, original_prompt: original, mode: S.mode, ratio: S.ratio, resolution: S.res, steps: S.steps, lora: S.lora, lora_strength: S.strength,
       seed: seedOverride ?? S.seed, randomize_seed: random,
       custom_repo: $("#customRepo").value.trim(), custom_file: $("#customFile").value.trim(), local_lora: $("#localLoraInput").value.trim(),
     };
@@ -619,7 +623,7 @@
       for (let n = 0; n < count; n++) {
         const fd = new FormData();
         fd.append("params", JSON.stringify(params));
-        for (let i = 0; i < need; i++) fd.append(`ref${i + 1}`, S.refs[i].blob, `ref${i + 1}.png`);
+        for (let i = 0; i < need; i++) fd.append(`ref${i + 1}`, refs[i].blob, `ref${i + 1}.png`);
         const job = await api("/api/generate", { method: "POST", body: fd });
         sent++;
         S.jobs.set(job.id, job);
@@ -635,6 +639,187 @@
     } finally {
       setTimeout(() => { btn.disabled = false; }, 250);
     }
+  }
+
+  // ---------------------------------------------------------------- prompt rewrite (official Qwen PE-T2I / PE-I2I)
+  const RW = {
+    job: null,          // rewrite job id being shown
+    pending: null,      // { prompt, need, refs, seedOverride, key } the popup will generate with
+    timer: null,
+    cache: new Map(),   // key -> result, so reopening the same prompt doesn't wait again
+    done: new Set(),    // prompts that already are rewrites; generating them again skips the popup
+    suggested: null,    // ratio the rewriter suggests, mapped to one the app supports
+  };
+  const blobIds = new WeakMap();
+  let blobSeq = 0;
+  const blobId = (b) => { if (!blobIds.has(b)) blobIds.set(b, ++blobSeq); return blobIds.get(b); };
+  const rwKey = (prompt, refs) => JSON.stringify([S.mode, prompt, refs.map((r) => blobId(r.blob))]);
+
+  function setRewriteOn(on) {
+    S.rewriteOn = on;
+    store.set("rewrite", on);
+    const b = $("#rewriteToggle");
+    b.setAttribute("aria-pressed", String(on));
+    b.dataset.tip = on ? "Rewrite with Qwen: on" : "Rewrite with Qwen: off";
+  }
+
+  function rwShow(state) {
+    $("#rwLoading").hidden = state !== "loading";
+    $("#rwError").hidden = state !== "error";
+    $("#rwResult").hidden = state !== "done";
+    $("#rwAgain").hidden = state === "loading";
+    $("#rwConfirm").disabled = state !== "done";
+  }
+
+  function openRewrite(prompt, need, seedOverride) {
+    const refs = S.refs.slice(0, need);
+    const key = rwKey(prompt, refs);
+    RW.pending = { prompt, need, refs, seedOverride, key };
+    $("#rwBadge").textContent = refs.length ? "PE-I2I" : "PE-T2I";
+    $("#rwOriginal").textContent = prompt;
+    $("#rewrite").hidden = false;
+    const cached = RW.cache.get(key);
+    if (cached) showRewrite(cached);
+    else startRewrite();
+  }
+
+  async function startRewrite() {
+    const pend = RW.pending;
+    stopRewrite();
+    rwShow("loading");
+    $("#rwPhase").textContent = "Starting";
+    $("#rwTime").textContent = "";
+    $("#rwThinking").textContent = "";
+    const fd = new FormData();
+    fd.append("params", JSON.stringify({ prompt: pend.prompt, mode: S.mode }));
+    pend.refs.forEach((r, i) => fd.append(`ref${i + 1}`, r.blob, `ref${i + 1}.png`));
+    try {
+      const job = await api("/api/rewrite", { method: "POST", body: fd });
+      if (RW.pending !== pend || $("#rewrite").hidden) { api(`/api/rewrite/${job.id}/cancel`, { method: "POST" }).catch(() => {}); return; }
+      RW.job = job.id;
+      const t0 = Date.now() - (job.server_time - job.created) * 1000;
+      RW.timer = setInterval(() => pollRewrite(job.id, t0), 700);
+    } catch (e) { rewriteFailed(e.message); }
+  }
+
+  async function pollRewrite(id, t0) {
+    $("#rwTime").textContent = fmtSecs((Date.now() - t0) / 1000);
+    let job;
+    try { job = await api(`/api/rewrite/${id}`); } catch (e) { if (RW.job === id) { stopRewrite(); rewriteFailed(e.message); } return; }
+    if (RW.job !== id) return;
+    $("#rwPhase").textContent = job.status === "queued" ? "Waiting for another rewrite" : job.phase;
+    $("#rwThinking").textContent = job.thinking || "";
+    if (job.status === "done") {
+      stopRewrite();
+      RW.cache.set(RW.pending.key, job.result);
+      if (RW.cache.size > 30) RW.cache.delete(RW.cache.keys().next().value);
+      showRewrite(job.result);
+    } else if (job.status === "error") {
+      stopRewrite(); rewriteFailed(job.error);
+    } else if (job.status === "cancelled") {
+      stopRewrite();
+    }
+  }
+
+  function stopRewrite({ cancel = false } = {}) {
+    clearInterval(RW.timer); RW.timer = null;
+    if (cancel && RW.job) api(`/api/rewrite/${RW.job}/cancel`, { method: "POST" }).catch(() => {});
+    RW.job = null;
+  }
+
+  function rewriteFailed(msg) {
+    $("#rwErrorText").textContent = msg || "Prompt rewrite failed.";
+    rwShow("error");
+  }
+
+  // Nearest ratio the app renders, by log distance (2:3 -> 3:4, 3:2 -> 4:3)
+  function nearestRatio(aspect) {
+    let best = null, dist = Infinity;
+    for (const { ratio } of S.cfg.ratios) {
+      const [w, hh] = ratio.split(":").map(Number);
+      const d = Math.abs(Math.log(aspect) - Math.log(w / hh));
+      if (d < dist) { dist = d; best = ratio; }
+    }
+    return best;
+  }
+
+  async function suggestRatio(res) {
+    const btn = $("#rwRatio");
+    btn.hidden = true;
+    RW.suggested = null;
+    let aspect = null, label = "";
+    const m = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(res.wh_ratio || "");
+    if (m) { aspect = +m[1] / +m[2]; label = res.wh_ratio; }
+    const follow = /^<image(\d+)>$/.exec(res.ratio_follow || "");
+    if (!aspect && follow) {
+      const ref = RW.pending.refs[+follow[1] - 1];
+      if (ref) {
+        try { const bmp = await createImageBitmap(ref.blob); aspect = bmp.width / bmp.height; bmp.close(); label = `image ${follow[1]}`; } catch { /* unreadable */ }
+      }
+    }
+    if (!aspect) return;
+    const ratio = nearestRatio(aspect);
+    if (!ratio || ratio === S.ratio) return;
+    RW.suggested = ratio;
+    btn.setAttribute("aria-pressed", "false");
+    btn.querySelector("span").textContent = label === ratio ? `Use suggested ${ratio}` : `Use ${ratio} (suggested ${label})`;
+    btn.hidden = false;
+  }
+
+  function showRewrite(res) {
+    const box = $("#rwPrompt");
+    box.value = res.prompt;
+    rwCount();
+    rwShow("done");
+    suggestRatio(res);
+    requestAnimationFrame(() => { box.scrollTop = 0; $("#rwConfirm").focus(); });
+  }
+
+  function rwCount() {
+    const words = $("#rwPrompt").value.trim().split(/\s+/).filter(Boolean).length;
+    $("#rwCount").textContent = `${words} words`;
+  }
+
+  function closeRewrite() {
+    stopRewrite({ cancel: true });
+    $("#rewrite").hidden = true;
+    RW.pending = null;
+    $("#prompt").focus();
+  }
+
+  function confirmRewrite({ mine = false } = {}) {
+    const pend = RW.pending;
+    if (!pend) return;
+    const text = mine ? pend.prompt : $("#rwPrompt").value.trim();
+    if (!text) return $("#rwPrompt").focus();
+    if (!mine && RW.suggested && $("#rwRatio").getAttribute("aria-pressed") === "true") { S.ratio = RW.suggested; syncControls(); }
+    stopRewrite({ cancel: true });
+    $("#rewrite").hidden = true;
+    RW.pending = null;
+    if (!mine) RW.done.add(text);
+    // The references may have changed while the popup was open; render with the ones that were rewritten
+    return generate({ seedOverride: pend.seedOverride, prompt: text, original: mine ? "" : pend.prompt, refs: pend.refs });
+  }
+
+  function wireRewrite() {
+    setRewriteOn(store.get("rewrite", true) !== false);
+    $("#rewriteToggle").addEventListener("click", () => {
+      setRewriteOn(!S.rewriteOn);
+      toast(S.rewriteOn ? "Prompts go through the Qwen rewriter before generating." : "Prompts are sent as you write them.");
+    });
+    $("#rwClose").addEventListener("click", closeRewrite);
+    $("#rewrite").addEventListener("click", (e) => { if (e.target.id === "rewrite") closeRewrite(); });
+    $("#rwMine").addEventListener("click", () => confirmRewrite({ mine: true }));
+    $("#rwAgain").addEventListener("click", () => { RW.cache.delete(RW.pending.key); startRewrite(); });
+    $("#rwConfirm").addEventListener("click", () => confirmRewrite());
+    $("#rwPrompt").addEventListener("input", rwCount);
+    $("#rwRatio").addEventListener("click", (e) => {
+      const b = e.currentTarget;
+      b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
+    });
+    $("#rewrite").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !$("#rwConfirm").disabled) { e.preventDefault(); confirmRewrite(); }
+    });
   }
 
   let pollTimer = null;
@@ -848,6 +1033,8 @@
   // ---------------------------------------------------------------- record actions
   function reuse(rec, { withPrompt = true } = {}) {
     if (withPrompt) { $("#prompt").value = rec.prompt; autosize(); }
+    // A prompt that came out of the rewriter goes straight to the renderer next time
+    if (withPrompt && rec.original_prompt) RW.done.add(rec.prompt.trim());
     if (rec.mode && rec.mode !== S.mode && modeInfo(rec.mode)) setMode(rec.mode, { quiet: true });
     if (rec.ratio) S.ratio = rec.ratio;
     if (rec.resolution) S.res = rec.resolution;
@@ -1052,6 +1239,7 @@
       ...(rec.elapsed ? [spec(!rec.upscaler ? "Render time" : rec.upscaler.startsWith("Enhanced") ? "Enhance time" : "Upscale time", fmtSecs(rec.elapsed))] : []),
       ...(rec.upscaler ? [spec(rec.upscaler.startsWith("Enhanced") ? "Enhanced" : "Upscaler", rec.upscaler.startsWith("Enhanced") ? `strength ${rec.upscaler.split(" ")[1]}` : rec.upscaler, true)] : []),
       ...(rec.enhance_prompt ? [spec("Enhance prompt", rec.enhance_prompt, true)] : []),
+      ...(rec.original_prompt ? [spec("Your prompt (before rewrite)", rec.original_prompt, true)] : []),
     );
     // A lone item on the last row spans both columns instead of leaving an empty cell
     const cells = $$("#lbSpecs > div:not(.wide)");
@@ -1401,12 +1589,14 @@
   const typing = (el) => el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      if (!$("#rewrite").hidden) return closeRewrite();
       if (!$("#shortcuts").hidden) return ($("#shortcuts").hidden = true);
       if (!$("#lightbox").hidden) return Z.s > 1.001 ? zoomReset(true) : closeLightbox();
       if ($("#inspector").classList.contains("open")) return closeInspector();
       if (SEL.files.size) return clearSelection();
       if (typing(document.activeElement)) return document.activeElement.blur();
     }
+    if (!$("#rewrite").hidden) return; // the popup handles its own keys
     if (!$("#lightbox").hidden) {
       if (typing(document.activeElement)) return; // typing in the enhance prompt, not navigating
       if (e.key === "ArrowLeft") { e.preventDefault(); lbStep(-1); }
@@ -1434,11 +1624,11 @@
     $("#promptCancel").addEventListener("click", closePromptEditor);
     $("#promptEditor").addEventListener("submit", (e) => { e.preventDefault(); savePrompt(); });
     window.addEventListener("resize", debounce(() => { if ($("#app").dataset.view === "prompts") measurePrompts(); }, 150));
-    $("#composer").addEventListener("submit", (e) => { e.preventDefault(); generate(); });
+    $("#composer").addEventListener("submit", (e) => { e.preventDefault(); generate({ rewrite: true }); });
     const prompt = $("#prompt");
     prompt.addEventListener("input", autosize);
     prompt.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); generate(); }
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); generate({ rewrite: true }); }
     });
     $("#filePicker").addEventListener("change", (e) => {
       const f = e.target.files[0];
@@ -1481,6 +1671,7 @@
     $("#lbNext").addEventListener("click", () => lbStep(1));
     wireZoom();
     wireSelection();
+    wireRewrite();
     $("#lbMore").addEventListener("click", () => {
       const open = $("#lbPrompt").classList.toggle("clamped") === false;
       $("#lbMore").classList.toggle("open", open);

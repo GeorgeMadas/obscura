@@ -33,6 +33,8 @@ from huggingface_hub import constants as hf_constants, hf_hub_download
 from PIL import Image, ImageOps
 from safetensors.torch import load_file as safetensors_load_file
 
+import prompt_rewriter
+
 # Model Configuration
 MODEL_ID = "KasugaiSakura/Qwen-Image-2.1-Uncensored-Abenzerps-GGUF"
 SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
@@ -756,14 +758,16 @@ def _prepare_ref(img: Image.Image) -> Image.Image:
 
 
 MAX_BLEND_REFS = 4
+# Rewritten prompts run to 400-500 words, well past what people type by hand
+MAX_PROMPT_CHARS = 8000
 
 
 def validate_request(p: dict, refs: list[Image.Image]) -> dict:
     prompt = (p.get("prompt") or "").strip()
     if not prompt:
         raise UserError("Describe what you want to see first.")
-    if len(prompt) > 4000:
-        raise UserError("Prompt is too long. Keep it under 4000 characters.")
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise UserError(f"Prompt is too long. Keep it under {MAX_PROMPT_CHARS} characters.")
     mode = p.get("mode", "Text to Image")
     if mode not in MODES:
         raise UserError(f"Unknown mode: {mode}")
@@ -792,8 +796,10 @@ def validate_request(p: dict, refs: list[Image.Image]) -> dict:
         seed = random.randint(0, MAX_SEED) if randomize else int(p.get("seed", 42)) % (MAX_SEED + 1)
     except (TypeError, ValueError):
         raise UserError("Seed must be a whole number.")
+    original = str(p.get("original_prompt") or "").strip()[:MAX_PROMPT_CHARS]
     return {
         "prompt": prompt,
+        "original_prompt": original if original and original != prompt else "",
         "mode": mode,
         "ratio": ratio,
         "resolution": resolution,
@@ -885,6 +891,7 @@ def run_generation(job: dict) -> dict:
         "checkpoint": CHECKPOINT,
         "lora_adapter": active_lora_desc,
         "prompt": req["prompt"],
+        **({"original_prompt": req["original_prompt"]} if req.get("original_prompt") else {}),
         "mode": req["mode"],
         "seed": req["seed"],
         "steps": req["steps"],
@@ -1072,6 +1079,7 @@ def _public_record(r: dict) -> dict:
         "upscaler": r.get("upscaler"),
         "upscaled_from": r.get("upscaled_from"),
         "enhance_prompt": r.get("enhance_prompt"),
+        "original_prompt": r.get("original_prompt"),
         "preview": f"/previews/{name}",
         "created": r.get("created") or _mtime(name),
     }
@@ -1204,6 +1212,46 @@ async def post_generate(
     return _job_view(JOBS[job_id])
 
 
+def _rewrite_job(view: dict | None) -> dict:
+    if view is None:
+        raise HTTPException(404, "That rewrite is gone. Try again.")
+    return view
+
+
+@api.post("/api/rewrite")
+async def post_rewrite(
+    params: str = Form(...),
+    ref1: UploadFile | None = File(None),
+    ref2: UploadFile | None = File(None),
+    ref3: UploadFile | None = File(None),
+    ref4: UploadFile | None = File(None),
+):
+    """Expand a prompt with the official Qwen rewriter (PE-I2I when the mode uses references, PE-T2I otherwise)."""
+    try:
+        p = json.loads(params)
+    except json.JSONDecodeError:
+        raise UserError("Malformed request.")
+    mode = p.get("mode", "Text to Image")
+    if mode not in MODES:
+        raise UserError(f"Unknown mode: {mode}")
+    refs = [img for img in [await _read_image(u) for u in (ref1, ref2, ref3, ref4)] if img is not None]
+    refs = refs[:1] if mode == "Edit Image (1 Ref)" else refs if mode == "Transform & Swap (2 Refs)" else []
+    try:
+        return prompt_rewriter.start(p.get("prompt", ""), refs)
+    except prompt_rewriter.RewriteError as e:
+        raise UserError(str(e))
+
+
+@api.get("/api/rewrite/{job_id}")
+def get_rewrite(job_id: str):
+    return _rewrite_job(prompt_rewriter.get(job_id))
+
+
+@api.post("/api/rewrite/{job_id}/cancel")
+def cancel_rewrite(job_id: str):
+    return _rewrite_job(prompt_rewriter.cancel(job_id))
+
+
 @api.get("/api/jobs")
 def get_jobs(ids: str = ""):
     wanted = [i for i in ids.split(",") if i]
@@ -1228,7 +1276,8 @@ def get_history(offset: int = 0, limit: int = 60, q: str = ""):
     items = [_public_record(records.get(f, {"file": f})) for f in files]
     if q.strip():
         needle = q.strip().lower()
-        items = [i for i in items if needle in i["prompt"].lower() or needle in (i["lora"] or "").lower()]
+        items = [i for i in items if needle in i["prompt"].lower() or needle in (i["original_prompt"] or "").lower()
+                 or needle in (i["lora"] or "").lower()]
     limit = max(1, min(limit, 200))
     return {"items": items[offset:offset + limit], "total": len(items)}
 
@@ -1295,7 +1344,7 @@ def _write_prompts(items: list[dict]):
 
 def _prompt_fields(body: dict) -> tuple[str, str]:
     title = str(body.get("title") or "").strip()[:120]
-    text = str(body.get("prompt") or "").strip()[:4000]
+    text = str(body.get("prompt") or "").strip()[:MAX_PROMPT_CHARS]
     if not title or not text:
         raise UserError("A saved prompt needs a title and the prompt text.")
     return title, text

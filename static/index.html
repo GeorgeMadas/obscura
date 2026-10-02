@@ -10,7 +10,7 @@
   <link rel="preload" href="/static/vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/vendor/phosphor/regular.css">
   <link rel="stylesheet" href="/static/vendor/phosphor/fill.css">
-  <link rel="stylesheet" href="/static/styles.css?v=18">
+  <link rel="stylesheet" href="/static/styles.css?v=19">
 </head>
 <body>
   <!-- Reusable brand mark -->
@@ -81,8 +81,9 @@
         <div class="refs" id="refs" hidden></div>
         <div class="composer-row">
           <label class="sr-only" for="prompt">Prompt</label>
-          <textarea id="prompt" rows="1" placeholder="A lighthouse at blue hour, fog rolling over black rocks…" maxlength="4000"></textarea>
+          <textarea id="prompt" rows="1" placeholder="A lighthouse at blue hour, fog rolling over black rocks…" maxlength="8000"></textarea>
           <div class="composer-side">
+            <button class="icon-btn rewrite-toggle" id="rewriteToggle" type="button" aria-pressed="true" aria-label="Rewrite prompt before generating" data-tip="Rewrite with Qwen: on"><i class="ph ph-magic-wand"></i></button>
             <button class="icon-btn mobile-only" id="settingsToggle2" type="button" aria-label="Settings"><i class="ph ph-sliders-horizontal"></i></button>
             <button class="btn btn-primary" id="generateBtn" type="submit">
               <span>Generate</span><kbd class="kbd-hint">↵</kbd>
@@ -222,7 +223,7 @@
         <label class="input-label" for="promptTitle">Title</label>
         <input class="input" id="promptTitle" maxlength="120" placeholder="Golden hour portrait" required>
         <label class="input-label" for="promptText">Prompt</label>
-        <textarea class="input prompt-text-input" id="promptText" rows="6" maxlength="4000" placeholder="The full prompt you want to reuse" required></textarea>
+        <textarea class="input prompt-text-input" id="promptText" rows="6" maxlength="8000" placeholder="The full prompt you want to reuse" required></textarea>
         <div class="prompt-editor-actions">
           <button class="btn btn-ghost btn-sm" id="promptCancel" type="button">Cancel</button>
           <button class="btn btn-primary btn-sm" id="promptSave" type="submit">Save prompt</button>
@@ -302,6 +303,7 @@
         <button class="icon-btn" data-close aria-label="Close"><i class="ph ph-x"></i></button></div>
       <ul class="keys">
         <li><span>Generate</span><span><kbd>Enter</kbd></span></li>
+        <li><span>Confirm rewritten prompt</span><span><kbd>Ctrl</kbd><kbd>Enter</kbd></span></li>
         <li><span>New line in prompt</span><span><kbd>Shift</kbd><kbd>Enter</kbd></span></li>
         <li><span>Focus prompt or search</span><span><kbd>/</kbd></span></li>
         <li><span>Create, Library, Styles, Prompts</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></span></li>
@@ -313,6 +315,43 @@
         <li><span>Close or clear selection</span><span><kbd>Esc</kbd></span></li>
         <li><span>Paste an image as reference</span><span><kbd>Ctrl</kbd><kbd>V</kbd></span></li>
       </ul>
+    </div>
+  </div>
+
+  <!-- Prompt rewrite review -->
+  <div class="modal" id="rewrite" role="dialog" aria-modal="true" aria-labelledby="rewriteTitle" hidden>
+    <div class="modal-card rewrite-card">
+      <div class="modal-head">
+        <h2 id="rewriteTitle">Rewritten prompt <span class="rw-badge" id="rwBadge">PE-T2I</span></h2>
+        <button class="icon-btn" id="rwClose" type="button" aria-label="Cancel"><i class="ph ph-x"></i></button>
+      </div>
+
+      <div class="rw-loading" id="rwLoading">
+        <div class="rw-status"><span class="queue-ring"></span><span id="rwPhase">Starting</span><span class="rw-time" id="rwTime"></span></div>
+        <p class="rw-thinking" id="rwThinking"></p>
+        <p class="rw-note">The official Qwen rewriter thinks before it writes. It usually takes under a minute; the first run also loads the model.</p>
+      </div>
+
+      <div class="rw-error" id="rwError" hidden><i class="ph-fill ph-warning-circle"></i><p id="rwErrorText"></p></div>
+
+      <div class="rw-result" id="rwResult" hidden>
+        <label class="sr-only" for="rwPrompt">Rewritten prompt</label>
+        <textarea class="input rw-prompt" id="rwPrompt" spellcheck="false" maxlength="8000"></textarea>
+        <div class="rw-meta">
+          <span id="rwCount"></span>
+          <button class="toggle" id="rwRatio" type="button" aria-pressed="false" hidden><i class="ph ph-crop"></i><span></span></button>
+        </div>
+        <details class="rw-original">
+          <summary><i class="ph ph-caret-right"></i>Your prompt</summary>
+          <p id="rwOriginal"></p>
+        </details>
+      </div>
+
+      <div class="rw-actions">
+        <button class="btn btn-ghost btn-sm" id="rwMine" type="button">Use my prompt</button>
+        <button class="btn btn-ghost btn-sm" id="rwAgain" type="button" hidden><i class="ph ph-arrows-clockwise"></i>Rewrite again</button>
+        <button class="btn btn-primary btn-sm" id="rwConfirm" type="button" disabled><i class="ph ph-check"></i><span>Confirm &amp; generate</span></button>
+      </div>
     </div>
   </div>
 
@@ -334,6 +373,6 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <input type="file" id="filePicker" accept="image/*" hidden>
-  <script src="/static/app.js?v=19" defer></script>
+  <script src="/static/app.js?v=20" defer></script>
 </body>
 </html>

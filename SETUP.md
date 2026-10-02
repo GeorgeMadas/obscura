@@ -14,8 +14,8 @@ Snapshot of the reference instance this guide reproduces (2026-10-01):
 | App | FastAPI + uvicorn, `app.py`, binds `127.0.0.1:17860` |
 | Service | supervisor program `qwen-image`, portal name `Qwen Image` |
 | External port | `10100` → internal `17860`, behind Caddy token auth |
-| Models | `$HF_HOME` = `/workspace/.hf_home` (~37 GB, list in step 5) |
-| Claude extras | `~/.claude/settings.json`, 12 skills, 1 memory (step 7) |
+| Models | `$HF_HOME` = `/workspace/.hf_home` (~75 GB, list in step 5) |
+| Claude extras | `~/.claude/settings.json`, 13 skills, 1 memory (step 7) |
 
 Ground rules while doing this:
 - Read `/workspace/CLAUDE.md` (Vast instance guide) first if you haven't — supervisor, Caddy and
@@ -52,7 +52,7 @@ df -h /workspace
 **Check:**
 - `torch.cuda.is_available()` is `True` and the CUDA version ≥ `min_cuda_for_wheels` (if set).
   If not: `uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128`.
-- At least **~60 GB free** disk and **≥ 48 GB VRAM** (the BF16 model + text encoder are large;
+- At least **~100 GB free** disk and **≥ 48 GB VRAM** (the BF16 model + text encoder are large;
   with less VRAM tell the user to switch to the "Small" model in the UI).
 - Note which **free, non-self-mapped** port exists for step 4 — prefer `10100`.
 
@@ -140,6 +140,10 @@ What it downloads into `$HF_HOME` (`/workspace/.hf_home`):
 - `Qwen/Qwen-Image-2.1` @ `790c92633540aa0cb11d9abf19eb46d861714758` — text encoder, VAE, processor,
   scheduler, configs (transformer weights skipped; the GGUF replaces them)
 
+- `Qwen/Qwen-Image-2.1-PE-T2I` @ `f3ed7985` and `Qwen/Qwen-Image-2.1-PE-I2I` @ `72927bc0` — the official
+  prompt rewriters (Qwen3.5-VL 9B, ~19 GB each). `prompt_rewriter.py` loads them lazily on the first
+  rewrite; only one sits on the GPU at a time (~20 GB), the other waits in CPU RAM.
+
 Style LoRAs (WarmBloodAban, prithivMLmods, SimpleTuner, AIImageStudio, e-n-v-y, Viggle, …) are
 **not** prefetched — `app.py` downloads each one the first time it's picked in the UI.
 
@@ -165,15 +169,16 @@ cp -n memory/*.md ~/.claude/projects/-workspace/memory/
 ```
 
 - `settings.json` — `{"theme": "dark"}`
-- skills (12): brandkit, design-taste-frontend, design-taste-frontend-v1, gpt-taste,
+- skills (13): brandkit, design-taste-frontend, design-taste-frontend-v1, gpt-taste,
   high-end-visual-design, image-to-code, imagegen-frontend-mobile, imagegen-frontend-web,
-  industrial-brutalist-ui, minimalist-ui, redesign-existing-projects, stitch-design-taste
+  industrial-brutalist-ui, minimalist-ui, qwen-image-2-1-prompter, redesign-existing-projects,
+  stitch-design-taste
 - memory: `no-test-generations` (the "never generate to test" rule above). The memory path is
   keyed to the working directory `/workspace`, so Claude should be started from `/workspace`.
 
 `cp -n` never overwrites; if a file already exists, diff it and ask the user before replacing.
 
-**Check:** `ls ~/.claude/skills | wc -l` ≥ 12 and `cat ~/.claude/projects/-workspace/memory/MEMORY.md`
+**Check:** `ls ~/.claude/skills | wc -l` ≥ 13 and `cat ~/.claude/projects/-workspace/memory/MEMORY.md`
 lists the memory. Tell the user skills/memory load on the **next** Claude Code session.
 
 ## 8. Start and verify
@@ -215,5 +220,6 @@ changed, rerun step 3 before restarting. Never commit `outputs/` or `history.jso
 | Service exits instantly, log says it was skipped | Portal entry name isn't exactly `Qwen Image` → step 4 |
 | Portal link 502 | App still loading the model; watch the log |
 | `Checksum verification failed` | Corrupt GGUF download → delete that blob under `$HF_HOME/hub/models--KasugaiSakura--*/blobs/` and rerun prefetch |
+| Rewrite popup says the GPU ran out of memory | A 4MP render + the ~20 GB rewriter didn't fit at once → wait for the render, or turn the rewrite toggle (wand icon) off |
 | CUDA OOM at load | GPU < ~48 GB → user switches to "Small" in the UI (writes `settings.json`) |
 | `git push` asks for a password | Step 2 credentials missing or token revoked — ask the user for a new token, update `deploy/github.env` |
