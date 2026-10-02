@@ -1,1 +1,2 @@
 - [No test generations](no-test-generations.md) — never render/upscale to test the Obscura app; user does testing
+- [Obscura repo + SETUP.md](obscura-repo-setup.md) — app lives in GeorgeMadas/obscura; SETUP.md rebuilds a new instance

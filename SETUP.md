@@ -15,7 +15,7 @@ Snapshot of the reference instance this guide reproduces (2026-10-01):
 | Service | supervisor program `qwen-image`, portal name `Qwen Image` |
 | External port | `10100` → internal `17860`, behind Caddy token auth |
 | Models | `$HF_HOME` = `/workspace/.hf_home` (~75 GB, list in step 5) |
-| Claude extras | `~/.claude/settings.json`, 13 skills, 1 memory (step 7) |
+| Claude extras | `~/.claude/settings.json`, 13 skills, 2 memories (step 7) |
 
 Ground rules while doing this:
 - Read `/workspace/CLAUDE.md` (Vast instance guide) first if you haven't — supervisor, Caddy and
@@ -173,13 +173,14 @@ cp -n memory/*.md ~/.claude/projects/-workspace/memory/
   high-end-visual-design, image-to-code, imagegen-frontend-mobile, imagegen-frontend-web,
   industrial-brutalist-ui, minimalist-ui, qwen-image-2-1-prompter, redesign-existing-projects,
   stitch-design-taste
-- memory: `no-test-generations` (the "never generate to test" rule above). The memory path is
+- memories: `no-test-generations` (the "never generate to test" rule above) and `obscura-repo-setup`
+  (this repo, SETUP.md, commit + push after app changes). The memory path is
   keyed to the working directory `/workspace`, so Claude should be started from `/workspace`.
 
 `cp -n` never overwrites; if a file already exists, diff it and ask the user before replacing.
 
 **Check:** `ls ~/.claude/skills | wc -l` ≥ 13 and `cat ~/.claude/projects/-workspace/memory/MEMORY.md`
-lists the memory. Tell the user skills/memory load on the **next** Claude Code session.
+lists both memories. Tell the user skills/memory load on the **next** Claude Code session.
 
 ## 8. Start and verify
 
