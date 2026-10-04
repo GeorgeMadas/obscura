@@ -1701,6 +1701,24 @@
     ed.hidden = !W.editor;
     if (W.editor) ed.href = W.editor;
   }
+  // ComfyUI doesn't autostart (it would hold VRAM next to Qwen), so the editor button starts it first.
+  // The tab is opened right away, inside the click, so popup blockers allow it.
+  async function openEditor(e) {
+    if (W.comfy && W.comfy.up) return;
+    e.preventDefault();
+    const tab = window.open("", "_blank");
+    if (tab) { tab.opener = null; tab.document.title = "Starting ComfyUI…"; tab.document.body.textContent = "Starting ComfyUI…"; }
+    toast("Starting ComfyUI…");
+    try {
+      W.comfy = await api("/api/comfy/start", { method: "POST" });
+    } catch (err) {
+      if (tab) tab.close();
+      toast(err.message, { type: "error" });
+      return;
+    }
+    renderWfStatus();
+    if (tab) tab.location.href = W.editor; else window.open(W.editor, "_blank", "noopener");
+  }
   function renderWorkflows() {
     renderEditorLink();
     renderWfStatus();
@@ -1734,7 +1752,7 @@
     }, icon("stack"), h("span", {}, "Keep video models loaded"));
     box.replaceChildren(
       h("span", { class: `wf-dot${c.up ? " up" : ""}` }),
-      h("span", { class: "wf-stat" }, c.up ? `ComfyUI ${c.version || ""}` : "ComfyUI is not running"),
+      h("span", { class: "wf-stat" }, c.up ? `ComfyUI ${c.version || ""}` : "ComfyUI is off. It starts when you open the editor or run a workflow"),
       c.up && c.vram_total ? h("span", { class: "wf-stat dim" }, `${gb(c.vram_free)} of ${gb(c.vram_total)} GB VRAM free`) : null,
       c.up && (c.running || c.pending) ? h("span", { class: "wf-stat dim" }, `${c.running + c.pending} in ComfyUI queue`) : null,
       h("span", { class: "wf-stat dim" }, qwen),
@@ -2116,6 +2134,7 @@
 
   function wireWorkflows() {
     $("#wfImportBtn").addEventListener("click", openImport);
+    $("#wfEditor").addEventListener("click", openEditor);
     $("#wfImportForm").addEventListener("submit", (e) => { e.preventDefault(); submitImport(); });
     $("#wfImportFile").addEventListener("change", (e) => { readImportFile(e.target.files[0]); e.target.value = ""; });
     const imp = $("#wfImport");

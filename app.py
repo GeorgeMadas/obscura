@@ -1037,6 +1037,9 @@ def _save_comfy_output(item: dict, req: dict, elapsed: float, index: int) -> dic
 
 def run_comfy(job: dict) -> dict:
     req = job["request"]
+    if not comfy_bridge.status().get("up"):
+        job["phase"] = "Starting ComfyUI"
+        comfy_bridge.ensure_running()
     park_qwen(job)
     if job["cancel"]:
         raise Cancelled()
@@ -1833,6 +1836,13 @@ def get_comfy_editor(tunnel: int = 0):
         "tunnel": _comfy_tunnel(start=True) if tunnel else "",
         "token": token,
     }
+
+
+@api.post("/api/comfy/start")
+def post_comfy_start():
+    """Start ComfyUI for the editor button; returns once it answers."""
+    _bridge(comfy_bridge.ensure_running)
+    return _comfy_status()
 
 
 @api.get("/api/comfy/status")

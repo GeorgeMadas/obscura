@@ -241,10 +241,13 @@ moves Qwen back, which takes several seconds ("Loading Qwen back to GPU"). Jobs 
 a video never overlaps a render. Runs started in the ComfyUI **editor** don't go through that queue: use
 **Free GPU for the editor** on the Workflows tab first.
 
+ComfyUI does **not** autostart (`autostart=false`), so it holds no VRAM next to Qwen. Obscura starts it on demand
+(`supervisorctl start comfyui`) when the user clicks **ComfyUI editor** or runs a workflow.
+
 **Check** (never run a workflow to test):
 ```bash
-supervisorctl status comfyui                                   # RUNNING
-curl -s 127.0.0.1:18188/system_stats | head -c 200             # JSON
+supervisorctl status comfyui                                   # STOPPED until first use (that's expected)
+curl -s 127.0.0.1:18188/system_stats | head -c 200             # JSON, once started
 curl -s 127.0.0.1:17860/api/workflows | python3 -c "import json,sys; print([w['slug'] for w in json.load(sys.stdin)['items']])"
 vast-capabilities | jq '.services[] | select(.name=="ComfyUI") | .direct_url'
 ```
@@ -266,7 +269,7 @@ changed, rerun step 3 before restarting. If ComfyUI files changed (`deploy/insta
 | `Checksum verification failed` | Corrupt GGUF download → delete that blob under `$HF_HOME/hub/models--KasugaiSakura--*/blobs/` and rerun prefetch |
 | Rewrite popup says the GPU ran out of memory | A 4MP render + the ~20 GB rewriter didn't fit at once → wait for the render, or turn the rewrite toggle (wand icon) off |
 | CUDA OOM at load | GPU < ~48 GB → user switches to "Small" in the UI (writes `settings.json`) |
-| Workflows tab says "ComfyUI isn't running" | `supervisorctl start comfyui`; log in `/var/log/portal/comfyui.log` |
+| Workflows tab says "ComfyUI is off" | Normal: it starts on the editor button or a workflow run. If that fails, check `/var/log/portal/comfyui.log` |
 | ComfyUI service skipped at start | Portal entry name isn't exactly `ComfyUI` → rerun `deploy/install_comfyui.sh` |
 | A video job fails with out of memory | A run from the ComfyUI editor or the prompt rewriter was holding VRAM → click **Free GPU for the editor**, wait, retry |
 | "Not enough free GPU memory to bring Qwen back" | ComfyUI still holds models (e.g. **Keep video models loaded** is on, or an editor run) → turn it off / wait, then render again |

@@ -94,6 +94,19 @@ def status() -> dict:
     }
 
 
+def ensure_running(timeout: float = 180):
+    """Start the comfyui service (it doesn't autostart, so it holds no VRAM until needed) and wait until it answers."""
+    if status().get("up"):
+        return
+    subprocess.run(["supervisorctl", "start", "comfyui"], capture_output=True, timeout=30)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if status().get("up"):
+            return
+        time.sleep(1)
+    raise BridgeError("ComfyUI didn't start. See /var/log/portal/comfyui.log.")
+
+
 def free(unload_models: bool = True):
     """Ask ComfyUI to drop its models and cached VRAM. Its worker applies this between prompts."""
     try:
