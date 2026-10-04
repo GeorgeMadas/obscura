@@ -17,8 +17,9 @@ Ground rules (same as SETUP.md):
    workflows.
 2. Obscura gets a **Workflows** tab. The user can drop in any ComfyUI workflow (API format) and
    run it from a simple form. Results go into the normal Library and history.
-3. **Video:** Wan 2.2 text-to-video and image-to-video presets, video playback in the Library and
-   viewer, and an "Animate" button on any image.
+3. **Video:** Wan 2.2 image-to-video and motion-transfer (Wan 2.2 Animate) presets, video playback
+   in the Library and viewer, and an "Animate" button on any image. **No text-to-video** (user
+   decision 2026-10-04).
 
 ## Key facts that shape the design
 
@@ -155,17 +156,27 @@ Put models under `/workspace/ComfyUI/models/…`. Download with `hf download`, t
 step 5 does. Pick the current repack repos/filenames at install time; ComfyUI's official Wan 2.2
 example workflows list the exact files.
 
+User decisions (2026-10-04): **no T2V 14B**. Install I2V 14B, the 5B draft model, and the
+motion-transfer model (Wan 2.2 Animate 14B).
+
 | Use | Files (approx. size) |
 |---|---|
-| Wan 2.2 T2V 14B | high-noise + low-noise diffusion models, fp8 (~2 × 14 GB) |
 | Wan 2.2 I2V 14B | high-noise + low-noise, fp8 (~2 × 14 GB) |
+| Wan 2.2 Animate 14B (motion transfer) | diffusion model fp8 (~17 GB), plus `clip_vision_h` (~1.3 GB) and its relight LoRA |
+| Wan 2.2 TI2V 5B (quick drafts) | diffusion model (~10 GB) + **Wan 2.2 VAE** (5B uses the 2.2 VAE, not 2.1) |
 | Shared | umt5-xxl text encoder fp8 (~7 GB), Wan 2.1 VAE (~0.3 GB) |
-| Optional, fast | Lightx2v / Lightning 4-step LoRAs for Wan 2.2 (~1 GB) |
-| Optional | Wan 2.2 TI2V 5B (~10 GB) for quick drafts |
+| Optional, fast | Lightx2v / Lightning 4-step LoRAs for Wan 2.2 I2V (~1 GB) |
 
-Ship presets in `workflows/`: **Wan 2.2 Text → Video**, **Wan 2.2 Image → Video**, and a fast
-4-step version of each if the LoRAs are installed. Fields: prompt, negative, seed,
-width/height, length (frames), fps, and steps.
+Motion transfer also needs pose/face preprocessing nodes (e.g. kijai's
+`ComfyUI-WanAnimatePreprocess` or whatever ComfyUI's official Wan 2.2 Animate example uses; check
+at install time and add them in phase 1).
+
+Ship presets in `workflows/`: **Wan 2.2 Image → Video** (14B, plus a fast 4-step version if the
+LoRAs are installed), **Wan 2.2 Draft Image → Video (5B)**, and **Wan 2.2 Motion Transfer**
+(inputs: a character image + a driving video). Fields: prompt, negative, seed, width/height,
+length (frames), fps, and steps. Motion transfer also needs a **video input field** (upload or pick
+a video from the Library), so the bridge's input detection must handle video-load nodes
+(e.g. VHS `LoadVideo`) as well as `LoadImage`.
 
 Add the downloads to `deploy/prefetch_models.py` (or a new `deploy/prefetch_comfy.py`).
 
@@ -178,12 +189,13 @@ Add the downloads to `deploy/prefetch_models.py` (or a new `deploy/prefetch_comf
 - Commit and push. Tell the user exactly what to test:
   1. The ComfyUI editor opens with the token.
   2. Import one of their own workflows and run it.
-  3. Wan T2V run.
-  4. Animate an existing image.
-  5. A Qwen render right after a video (checks the VRAM handoff).
+  3. Wan I2V run (14B and 5B draft).
+  4. Motion transfer: a character image + a driving video.
+  5. Animate an existing image.
+  6. A Qwen render right after a video (checks the VRAM handoff).
 
-## Open questions for the user (ask before phase 7)
+## User decisions (answered 2026-10-04)
 
-- 14B only, or also the 5B draft model?
-- Expose the ComfyUI editor on a port, or only through Obscura plus SSH forwarding?
-- Do any specific custom workflows or nodes they already use need to be installed up front?
+- Models: **I2V 14B + 5B draft + Wan 2.2 Animate (motion transfer)**. No T2V.
+- **Expose the ComfyUI editor on a port** (10200 → 18188, behind Caddy token auth).
+- Up-front nodes: whatever the motion-transfer workflow needs (Wan Animate preprocess nodes).
