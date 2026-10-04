@@ -16,8 +16,8 @@ Snapshot of the reference instance this guide reproduces (2026-10-01):
 | External port | `10100` → internal `17860`, behind Caddy token auth |
 | Models | `$HF_HOME` = `/workspace/.hf_home` (~75 GB, list in step 5) |
 | ComfyUI | `/workspace/ComfyUI`, venv `/venv/comfy`, service `comfyui` on `127.0.0.1:18188`, portal `ComfyUI` `10200` → `18188` (step 9) |
-| Video models | `/workspace/ComfyUI/models` (~68 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan Animate 2) |
-| Disk | **≥ 250 GB** (Qwen ~75 GB + video models ~68 GB + two venvs ~20 GB + outputs) |
+| Video models | `/workspace/ComfyUI/models` (~97 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan Animate 2, Wan 2.2 Animate + pose models) |
+| Disk | **≥ 300 GB** (Qwen ~75 GB + video models ~97 GB + two venvs ~20 GB + outputs) |
 | Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor) |
 | Claude extras | `~/.claude/settings.json`, 13 skills, 2 memories (step 7) |
 
@@ -218,12 +218,14 @@ fast version, Motion transfer with Wan Animate 2, and the 5B draft model) plus a
 `deploy/provision.sh` does this step automatically on new instances; by hand it is one script:
 
 ```bash
-bash /workspace/qwen-image/deploy/install_comfyui.sh   # idempotent; ~68 GB of models
+bash /workspace/qwen-image/deploy/install_comfyui.sh   # idempotent; ~97 GB of models
 ```
 
 What it sets up:
-- `/workspace/ComfyUI` at a pinned commit, with ComfyUI-Manager, ComfyUI-VideoHelperSuite and ComfyUI-KJNodes
-  (commits pinned in the script).
+- `/workspace/ComfyUI` at a pinned commit, with ComfyUI-Manager, VideoHelperSuite, KJNodes, and the packs the
+  user's *DREAMOFM ultimate motion* workflow needs: WanVideoWrapper, WanAnimatePreprocess, teskors-utils,
+  rgthree-comfy (plus WanAnimatePlus and Dynamic-Lora-Scheduler). Commits are pinned in the script.
+  Workflows saved in the editor live in `/workspace/ComfyUI/user/default/workflows/` (not in git).
 - **Its own venv `/venv/comfy`** with the same `torch 2.11.0+cu128` as `/venv/main`. ComfyUI-Manager installs
   whatever a node asks for; in its own venv that can't break Obscura's pinned `transformers`/`diffusers`.
 - Service `comfyui` (`deploy/service/comfyui.sh` + `.conf`), listening on `127.0.0.1:18188`, and the portal
