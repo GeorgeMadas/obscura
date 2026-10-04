@@ -2,13 +2,17 @@
 # Obscura / Qwen Image auto-provisioning for Vast.ai (implements SETUP.md steps 0-8 + Claude Code)
 # The Vast template's on-start downloads this file from main and runs it in the background, so
 # edits here apply to every NEW instance. Needs GITHUB_TOKEN in the Vast account env vars.
-# Log: /workspace/obscura-provision.log   Done marker: /workspace/.obscura-provisioned
+# Log: /var/log/obscura-provision.log   Done marker: /workspace/.obscura-provisioned
 set -o pipefail
 log(){ echo "[obscura $(date +%T)] $*"; }
 APP=/workspace/qwen-image
 PY=/venv/main/bin/python
 export HF_HOME=/workspace/.hf_home HF_HUB_ENABLE_HF_TRANSFER=1
-export PATH="/root/.local/bin:$PATH"
+export PATH="/root/.local/bin:$PATH" HOME=/root
+
+# On-start runs before the Vast entrypoint creates /workspace and starts supervisor; wait for both
+until [ -d /workspace ] && supervisorctl pid >/dev/null 2>&1; do sleep 5; done
+log "Vast entrypoint is up, provisioning"
 
 # 0. Repo
 if [ ! -f "$APP/app.py" ]; then
