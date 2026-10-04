@@ -668,6 +668,7 @@
     cache: new Map(),   // key -> result, so reopening the same prompt doesn't wait again
     done: new Set(),    // prompts that already are rewrites; generating them again skips the popup
     suggested: null,    // ratio the rewriter suggests, mapped to one the app supports
+    min: false,         // popup minimized to the dock while the rewrite runs in the background
   };
   const blobIds = new WeakMap();
   let blobSeq = 0;
@@ -690,9 +691,28 @@
     $("#rwConfirm").disabled = state !== "done";
   }
 
+  function minimizeRewrite() {
+    RW.min = true;
+    $("#rewrite").hidden = true;
+    $("#rwDock").hidden = false;
+    $("#rwDockText").textContent = $("#rwPhase").textContent || "Rewriting prompt";
+    $("#rwDockTime").textContent = $("#rwTime").textContent;
+    $("#prompt").focus();
+  }
+
+  function expandRewrite() {
+    RW.min = false;
+    $("#rwDock").hidden = true;
+    $("#rewrite").hidden = false;
+  }
+
   function openRewrite(prompt, need, seedOverride) {
     const refs = S.refs.slice(0, need);
     const key = rwKey(prompt, refs);
+    // Same prompt again while it rewrites minimized: just bring it back. A different prompt replaces it.
+    if (RW.min && RW.pending && RW.pending.key === key) return expandRewrite();
+    stopRewrite({ cancel: true });
+    if (RW.min) expandRewrite();
     RW.pending = { prompt, need, refs, seedOverride, key };
     $("#rwBadge").textContent = refs.length ? "PE-I2I" : "PE-T2I";
     $("#rwOriginal").textContent = prompt;
@@ -714,7 +734,7 @@
     pend.refs.forEach((r, i) => fd.append(`ref${i + 1}`, r.blob, `ref${i + 1}.png`));
     try {
       const job = await api("/api/rewrite", { method: "POST", body: fd });
-      if (RW.pending !== pend || $("#rewrite").hidden) { api(`/api/rewrite/${job.id}/cancel`, { method: "POST" }).catch(() => {}); return; }
+      if (RW.pending !== pend) { api(`/api/rewrite/${job.id}/cancel`, { method: "POST" }).catch(() => {}); return; }
       RW.job = job.id;
       const t0 = Date.now() - (job.server_time - job.created) * 1000;
       RW.timer = setInterval(() => pollRewrite(job.id, t0), 700);
@@ -722,19 +742,21 @@
   }
 
   async function pollRewrite(id, t0) {
-    $("#rwTime").textContent = fmtSecs((Date.now() - t0) / 1000);
+    $("#rwTime").textContent = $("#rwDockTime").textContent = fmtSecs((Date.now() - t0) / 1000);
     let job;
     try { job = await api(`/api/rewrite/${id}`); } catch (e) { if (RW.job === id) { stopRewrite(); rewriteFailed(e.message); } return; }
     if (RW.job !== id) return;
-    $("#rwPhase").textContent = job.status === "queued" ? "Waiting for another rewrite" : job.phase;
+    $("#rwPhase").textContent = $("#rwDockText").textContent = job.status === "queued" ? "Waiting for another rewrite" : job.phase;
     $("#rwThinking").textContent = job.thinking || "";
     if (job.status === "done") {
       stopRewrite();
       RW.cache.set(RW.pending.key, job.result);
       if (RW.cache.size > 30) RW.cache.delete(RW.cache.keys().next().value);
+      if (RW.min) expandRewrite();
       showRewrite(job.result);
     } else if (job.status === "error") {
       stopRewrite(); rewriteFailed(job.error);
+      if (RW.min) expandRewrite();
     } else if (job.status === "cancelled") {
       stopRewrite();
     }
@@ -801,6 +823,8 @@
 
   function closeRewrite() {
     stopRewrite({ cancel: true });
+    RW.min = false;
+    $("#rwDock").hidden = true;
     $("#rewrite").hidden = true;
     RW.pending = null;
     $("#prompt").focus();
@@ -827,7 +851,10 @@
       toast(S.rewriteOn ? "Prompts go through the Qwen rewriter before generating." : "Prompts are sent as you write them.");
     });
     $("#rwClose").addEventListener("click", closeRewrite);
-    $("#rewrite").addEventListener("click", (e) => { if (e.target.id === "rewrite") closeRewrite(); });
+    $("#rwMin").addEventListener("click", minimizeRewrite);
+    $("#rwDock").addEventListener("click", expandRewrite);
+    // Clicking outside minimizes instead of cancelling, so a stray click doesn't throw the rewrite away
+    $("#rewrite").addEventListener("click", (e) => { if (e.target.id === "rewrite") minimizeRewrite(); });
     $("#rwMine").addEventListener("click", () => confirmRewrite({ mine: true }));
     $("#rwAgain").addEventListener("click", () => { RW.cache.delete(RW.pending.key); startRewrite(); });
     $("#rwConfirm").addEventListener("click", () => confirmRewrite());

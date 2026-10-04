@@ -1217,6 +1217,21 @@ body.selecting .ftile-img, body.selecting .tile { cursor: pointer; }
 .rewrite-card { width: min(720px, 100%); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; gap: 14px; }
 .rewrite-card .modal-head { margin-bottom: 0; }
 .rewrite-card h2 { display: flex; align-items: center; gap: 10px; }
+.rw-head-actions { display: flex; gap: 4px; }
+.rw-dock {
+  position: fixed; right: 20px; bottom: 20px; z-index: var(--z-toast); display: flex; align-items: center; gap: 10px;
+  max-width: min(360px, calc(100vw - 32px)); padding: 10px 14px; border-radius: var(--pill); background: var(--bg-2);
+  box-shadow: var(--highlight), 0 0 0 1px var(--line-2), var(--shadow-lg); color: var(--fg); font-size: 13.5px; cursor: pointer;
+  animation: toast-in 0.3s var(--ease);
+}
+.rw-dock[hidden] { display: none; }
+.rw-dock:hover { box-shadow: var(--highlight), 0 0 0 1px var(--fg-4), var(--shadow-lg); }
+.rw-dock .queue-ring { flex: none; }
+.rw-dock-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rw-dock .rw-time { margin-left: 0; }
+.rw-dock i { color: var(--fg-3); font-size: 16px; flex: none; }
+.rw-dock:not([hidden]) ~ .toasts { bottom: 76px; }
+@media (max-width: 640px) { .rw-dock { right: 16px; bottom: 16px; } }
 .rw-badge { font: 500 11px/1 var(--mono); color: var(--fg-3); background: var(--bg-3); box-shadow: 0 0 0 1px var(--line) inset; padding: 4px 7px; border-radius: var(--pill); }
 .rw-loading { display: flex; flex-direction: column; gap: 12px; }
 .rw-status { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--fg); }
