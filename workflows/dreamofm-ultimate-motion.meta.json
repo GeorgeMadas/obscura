@@ -1,0 +1,333 @@
+{
+  "name": "Motion transfer",
+  "description": "DREAMOFM ultimate motion: Wan 2.2 Animate copies the pose and face motion of a driving video onto your character.",
+  "output": "video",
+  "preset": true,
+  "order": 3,
+  "size": {
+    "width": "width",
+    "height": "height"
+  },
+  "models": [
+    "Wan2_2-Animate-14B_fp8_scaled_e4m3fn_KJ_v2.safetensors",
+    "vitpose_h_wholebody_model.onnx",
+    "yolov10m.onnx"
+  ],
+  "fields": [
+    {
+      "key": "prompt",
+      "label": "Prompt",
+      "type": "text",
+      "default": "woman dancing, static locked-off shot. Camera fixed on tripod, completely still, no camera movement, no pan, no tilt, no zoom, no dolly, no tracking, no handheld motion. Single static frame.",
+      "targets": [
+        [
+          "493",
+          "text"
+        ]
+      ],
+      "help": "What the character does and how the shot looks. Keep the camera static for the cleanest motion."
+    },
+    {
+      "key": "negative",
+      "label": "Negative prompt",
+      "type": "text",
+      "default": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "targets": [
+        [
+          "488",
+          "text"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "image",
+      "label": "Character image",
+      "type": "image",
+      "default": "",
+      "targets": [
+        [
+          "76",
+          "image"
+        ]
+      ],
+      "help": "The character's pose must match the first frame of the driving video."
+    },
+    {
+      "key": "video",
+      "label": "Driving video",
+      "type": "video",
+      "default": "",
+      "targets": [
+        [
+          "75",
+          "video"
+        ]
+      ],
+      "help": "The motion to copy. Static camera footage works best (dance, close-up, seated)."
+    },
+    {
+      "key": "width",
+      "label": "Width",
+      "type": "int",
+      "default": 720,
+      "min": 256,
+      "max": 1920,
+      "step": 16,
+      "targets": [
+        [
+          "75",
+          "custom_width"
+        ],
+        [
+          "158",
+          "width"
+        ]
+      ]
+    },
+    {
+      "key": "height",
+      "label": "Height",
+      "type": "int",
+      "default": 1280,
+      "min": 256,
+      "max": 1920,
+      "step": 16,
+      "targets": [
+        [
+          "75",
+          "custom_height"
+        ],
+        [
+          "158",
+          "height"
+        ]
+      ]
+    },
+    {
+      "key": "fps",
+      "label": "FPS",
+      "type": "float",
+      "default": 30,
+      "min": 8,
+      "max": 60,
+      "step": 1,
+      "targets": [
+        [
+          "75",
+          "force_rate"
+        ],
+        [
+          "319",
+          "frame_rate"
+        ]
+      ],
+      "help": "The driving video is resampled to this rate."
+    },
+    {
+      "key": "max_frames",
+      "label": "Max frames",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 3000,
+      "step": 1,
+      "targets": [
+        [
+          "75",
+          "frame_load_cap"
+        ]
+      ],
+      "help": "0 uses the whole driving video. Lower it for quick tests."
+    },
+    {
+      "key": "skip_frames",
+      "label": "Skip first frames",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 3000,
+      "step": 1,
+      "targets": [
+        [
+          "75",
+          "skip_first_frames"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "steps",
+      "label": "Steps",
+      "type": "int",
+      "default": 4,
+      "min": 2,
+      "max": 20,
+      "step": 1,
+      "targets": [
+        [
+          "273",
+          "steps"
+        ]
+      ]
+    },
+    {
+      "key": "pose_strength",
+      "label": "Pose strength",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 2,
+      "step": 0.05,
+      "targets": [
+        [
+          "270",
+          "pose_strength"
+        ]
+      ],
+      "help": "Lower it if the motion looks jerky."
+    },
+    {
+      "key": "face_strength",
+      "label": "Face strength",
+      "type": "float",
+      "default": 0.6,
+      "min": 0,
+      "max": 2,
+      "step": 0.05,
+      "targets": [
+        [
+          "270",
+          "face_strength"
+        ]
+      ],
+      "help": "Lower it if the face looks jerky."
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "default": 0,
+      "min": 0,
+      "max": 2147483647,
+      "targets": [
+        [
+          "273",
+          "seed"
+        ]
+      ]
+    },
+    {
+      "key": "cfg",
+      "label": "CFG",
+      "type": "float",
+      "default": 1.0,
+      "min": 1,
+      "max": 10,
+      "step": 0.5,
+      "targets": [
+        [
+          "273",
+          "cfg"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "shift",
+      "label": "Shift",
+      "type": "float",
+      "default": 5.0,
+      "min": 1,
+      "max": 20,
+      "step": 0.5,
+      "targets": [
+        [
+          "273",
+          "shift"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "lora_lightx2v",
+      "label": "LoRA: Lightx2v distill",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 2,
+      "step": 0.05,
+      "targets": [
+        [
+          "354",
+          "strength_0"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "lora_4step",
+      "label": "LoRA: Lightx2v 4-step high",
+      "type": "float",
+      "default": 0.3,
+      "min": 0,
+      "max": 2,
+      "step": 0.05,
+      "targets": [
+        [
+          "354",
+          "strength_1"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "lora_pusa",
+      "label": "LoRA: Pusa",
+      "type": "float",
+      "default": 0.9,
+      "min": 0,
+      "max": 2,
+      "step": 0.05,
+      "targets": [
+        [
+          "354",
+          "strength_2"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "lora_hps",
+      "label": "LoRA: HPS reward",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 2,
+      "step": 0.05,
+      "targets": [
+        [
+          "354",
+          "strength_3"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "smooth",
+      "label": "Pose smoothing",
+      "type": "float",
+      "default": 0.7,
+      "min": 0,
+      "max": 1,
+      "step": 0.05,
+      "targets": [
+        [
+          "532",
+          "smooth_alpha"
+        ]
+      ],
+      "hidden": true
+    }
+  ]
+}

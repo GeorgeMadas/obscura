@@ -34,7 +34,7 @@ MAX_SEED = 2**31 - 1
 
 FIELD_TYPES = {"text", "int", "float", "seed", "image", "video", "bool"}
 SLUG = re.compile(r"^[a-z0-9][a-z0-9\-]{0,63}$")
-SAMPLERS = ("KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced")
+SAMPLERS = ("KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced", "WanVideoSampler")
 # Inputs exposed automatically when a workflow is imported: input name -> (type, label)
 NUMBER_INPUTS = {
     "steps": ("int", "Steps"), "cfg": ("float", "CFG"), "denoise": ("float", "Denoise"),
@@ -429,7 +429,7 @@ def sampler_steps(graph: dict) -> dict[str, int]:
     out = {}
     for nid, n in graph.items():
         ct, i = n["class_type"], n["inputs"]
-        if ct == "KSampler":
+        if ct in ("KSampler", "WanVideoSampler"):
             out[nid] = int(num(i.get("steps")) or 0)
         elif ct == "KSamplerAdvanced":
             steps, start, end = num(i.get("steps")), num(i.get("start_at_step")) or 0, num(i.get("end_at_step"))
@@ -466,7 +466,8 @@ PHASES = [
     (("TextEncode",), "Reading prompt"),
     (("VisionEncode",), "Reading image"),
     (("LoadVideo", "GetVideoComponents"), "Reading video"),
-    (("VAEDecode",), "Decoding frames"),
+    (("PoseAndFaceDetection", "PoseData"), "Detecting pose"),
+    (("VAEDecode", "VideoDecode"), "Decoding frames"),
     (("CreateVideo", "SaveVideo", "VideoCombine"), "Saving video"),
     (("SaveImage",), "Saving"),
 ]

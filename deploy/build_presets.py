@@ -1,7 +1,7 @@
 """Write the built-in ComfyUI presets into workflows/ (API graphs + form metadata).
 
-Graphs follow ComfyUI's official Wan 2.2 and Wan Animate 2 templates, flattened from their subgraphs into
-API format. Rerun after editing: python deploy/build_presets.py
+The Image → Video graphs follow ComfyUI's official Wan 2.2 templates, flattened into API format; Motion transfer is
+the user's DREAMOFM ultimate motion workflow (deploy/presets/). Rerun after editing: python deploy/build_presets.py
 """
 import json
 from pathlib import Path
@@ -140,73 +140,52 @@ def wan22_5b():
     })
 
 
-# ------------------------------------------------------------------ Wan Animate 2 motion transfer (one segment)
-def wan_animate2():
-    g = {
-        "1": node("UNETLoader", unet_name="wan_animate_2_int8_convrot.safetensors", weight_dtype="default"),
-        "2": node("LoraLoaderModelOnly", "Lightx2v distill", model=["1", 0],
-                  lora_name="lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors", strength_model=1.0),
-        "3": node("WanAnimate2Cache", model=["2", 0], device="gpu", dtype="int8"),
-        "4": node("ModelSamplingSD3", model=["3", 0], shift=5.0),
-        "5": node("CLIPLoader", clip_name="umt5_xxl_fp8_e4m3fn_scaled.safetensors", type="wan", device="default"),
-        "6": node("CLIPTextEncode", "Positive Prompt", clip=["5", 0], text=""),
-        "7": node("CLIPTextEncode", "Negative Prompt", clip=["5", 0], text=WAN_NEGATIVE),
-        "8": node("CLIPTextEncode", "Motion Prompt", clip=["5", 0], text=""),
-        "9": node("CLIPVisionLoader", clip_name="clip_vision_h.safetensors"),
-        "10": node("VAELoader", vae_name="Wan2_1_VAE_bf16.safetensors"),
-        "11": node("LoadImage", "Character image", image=""),
-        "12": node("LoadVideo", "Driving video", file=""),
-        "13": node("GetVideoComponents", video=["12", 0]),
-        "14": node("ImageFromBatch", "Driving frames", image=["13", 0], batch_index=0, length=81),
-        "15": node("ResizeImageMaskNode", "Resize driving video", input=["14", 0], scale_method="area",
-                   resize_type="scale dimensions", **{"resize_type.width": 480, "resize_type.height": 832, "resize_type.crop": "center"}),
-        "16": node("ResizeImageMaskNode", "Resize character", input=["11", 0], scale_method="area",
-                   resize_type="scale dimensions", **{"resize_type.width": 480, "resize_type.height": 832, "resize_type.crop": "center"}),
-        "17": node("CLIPVisionEncode", clip_vision=["9", 0], image=["16", 0], crop="none"),
-        "18": node("ImageFromBatch", "First driving frame", image=["15", 0], batch_index=0, length=1),
-        "19": node("CLIPVisionEncode", clip_vision=["9", 0], image=["18", 0], crop="none"),
-        "20": node("WanAnimate2ToVideo", positive=["6", 0], negative=["7", 0], vae=["10", 0], reference_image=["16", 0],
-                   pose_video=["15", 0], clip_vision_output=["17", 0], positive_pose=["8", 0], clip_vision_output_pose=["19", 0],
-                   width=480, height=832, length=81, batch_size=1, video_frame_offset=0, pose_strength=1.0,
-                   pose_start_percent=0.0, pose_end_percent=1.0, reference_image_strength=1.0),
-        "21": node("KSamplerSelect", sampler_name="lcm"),
-        "22": node("BasicScheduler", model=["4", 0], scheduler="simple", steps=6, denoise=1.0),
-        "23": node("SamplerCustom", model=["4", 0], add_noise=True, noise_seed=0, cfg=1.0, positive=["20", 0],
-                   negative=["20", 1], sampler=["21", 0], sigmas=["22", 0], latent_image=["20", 2]),
-        "24": node("TrimVideoLatent", samples=["23", 0], trim_amount=["20", 3]),
-        "25": node("VAEDecode", samples=["24", 0], vae=["10", 0]),
-        "26": node("CreateVideo", images=["25", 0], fps=["13", 2]),
-        "27": node("SaveVideo", video=["26", 0], filename_prefix="obscura/wan-animate2", format="auto", **{"format.codec": "auto"}),
-    }
+# ------------------------------------------------------------------ DREAMOFM ultimate motion (Wan 2.2 Animate, pose-driven)
+def ultimate_motion():
+    """The user's DREAMOFM_ultimate_motion_1.0v workflow (kijai WanVideoWrapper + Wan 2.2 Animate 14B with ViTPose/YOLO
+    pose and face detection), converted from the editor format to deploy/presets/dreamofm-ultimate-motion.api.json.
+    Its pose-preview video and an unused pose drawer were left out; everything else is unchanged."""
+    g = json.loads((Path(__file__).resolve().parent / "presets" / "dreamofm-ultimate-motion.api.json").read_text(encoding="utf-8"))
     fields = [
-        {"key": "prompt", "label": "Prompt", "type": "text",
-         "default": "Character description: a young woman with long dark hair in a red jacket.\nBackground description: a sunlit city street.",
-         "targets": [["6", "text"]], "help": "Describe how the character and background look. No motion words."},
-        {"key": "motion", "label": "Motion prompt", "type": "text", "default": "A person dancing energetically, background stationary.",
-         "targets": [["8", "text"]], "help": "Describe the motion in the driving video."},
-        {"key": "negative", "label": "Negative prompt", "type": "text", "default": WAN_NEGATIVE, "targets": [["7", "text"]], "hidden": True},
-        {"key": "image", "label": "Character image", "type": "image", "default": "", "targets": [["11", "image"]]},
-        {"key": "video", "label": "Driving video", "type": "video", "default": "", "targets": [["12", "file"]],
-         "help": "Its motion is copied onto the character. Keep the framing similar (full body to full body)."},
-        *size_fields(480, 832, [["15", "resize_type.width"], ["16", "resize_type.width"], ["20", "width"]],
-                     [["15", "resize_type.height"], ["16", "resize_type.height"], ["20", "height"]], 16),
-        {"key": "length", "label": "Frames", "type": "int", "default": 81, "min": 5, "max": 241, "step": 4,
-         "targets": [["14", "length"], ["20", "length"]],
-         "help": "Frames taken from the start of the driving video, played at its frame rate. Use 4n+1."},
-        {"key": "steps", "label": "Steps", "type": "int", "default": 6, "min": 4, "max": 20, "step": 1, "targets": [["22", "steps"]]},
-        {"key": "pose_strength", "label": "Motion strength", "type": "float", "default": 1.0, "min": 0, "max": 2, "step": 0.05,
-         "targets": [["20", "pose_strength"]]},
-        {"key": "reference_strength", "label": "Identity strength", "type": "float", "default": 1.0, "min": 0, "max": 2, "step": 0.05,
-         "targets": [["20", "reference_image_strength"]]},
-        {"key": "seed", "label": "Seed", "type": "seed", "default": 0, "min": 0, "max": MAX_SEED, "targets": [["23", "noise_seed"]]},
+        {"key": "prompt", "label": "Prompt", "type": "text", "default": g["493"]["inputs"]["text"], "targets": [["493", "text"]],
+         "help": "What the character does and how the shot looks. Keep the camera static for the cleanest motion."},
+        {"key": "negative", "label": "Negative prompt", "type": "text", "default": WAN_NEGATIVE, "targets": [["488", "text"]], "hidden": True},
+        {"key": "image", "label": "Character image", "type": "image", "default": "", "targets": [["76", "image"]],
+         "help": "The character's pose must match the first frame of the driving video."},
+        {"key": "video", "label": "Driving video", "type": "video", "default": "", "targets": [["75", "video"]],
+         "help": "The motion to copy. Static camera footage works best (dance, close-up, seated)."},
+        *size_fields(720, 1280, [["75", "custom_width"], ["158", "width"]], [["75", "custom_height"], ["158", "height"]], 16),
+        {"key": "fps", "label": "FPS", "type": "float", "default": 30, "min": 8, "max": 60, "step": 1,
+         "targets": [["75", "force_rate"], ["319", "frame_rate"]], "help": "The driving video is resampled to this rate."},
+        {"key": "max_frames", "label": "Max frames", "type": "int", "default": 0, "min": 0, "max": 3000, "step": 1,
+         "targets": [["75", "frame_load_cap"]], "help": "0 uses the whole driving video. Lower it for quick tests."},
+        {"key": "skip_frames", "label": "Skip first frames", "type": "int", "default": 0, "min": 0, "max": 3000, "step": 1,
+         "targets": [["75", "skip_first_frames"]], "hidden": True},
+        {"key": "steps", "label": "Steps", "type": "int", "default": 4, "min": 2, "max": 20, "step": 1, "targets": [["273", "steps"]]},
+        {"key": "pose_strength", "label": "Pose strength", "type": "float", "default": 0.5, "min": 0, "max": 2, "step": 0.05,
+         "targets": [["270", "pose_strength"]], "help": "Lower it if the motion looks jerky."},
+        {"key": "face_strength", "label": "Face strength", "type": "float", "default": 0.6, "min": 0, "max": 2, "step": 0.05,
+         "targets": [["270", "face_strength"]], "help": "Lower it if the face looks jerky."},
+        {"key": "seed", "label": "Seed", "type": "seed", "default": 0, "min": 0, "max": MAX_SEED, "targets": [["273", "seed"]]},
+        {"key": "cfg", "label": "CFG", "type": "float", "default": 1.0, "min": 1, "max": 10, "step": 0.5, "targets": [["273", "cfg"]], "hidden": True},
+        {"key": "shift", "label": "Shift", "type": "float", "default": 5.0, "min": 1, "max": 20, "step": 0.5, "targets": [["273", "shift"]], "hidden": True},
+        {"key": "lora_lightx2v", "label": "LoRA: Lightx2v distill", "type": "float", "default": 1.0, "min": 0, "max": 2, "step": 0.05,
+         "targets": [["354", "strength_0"]], "hidden": True},
+        {"key": "lora_4step", "label": "LoRA: Lightx2v 4-step high", "type": "float", "default": 0.3, "min": 0, "max": 2, "step": 0.05,
+         "targets": [["354", "strength_1"]], "hidden": True},
+        {"key": "lora_pusa", "label": "LoRA: Pusa", "type": "float", "default": 0.9, "min": 0, "max": 2, "step": 0.05,
+         "targets": [["354", "strength_2"]], "hidden": True},
+        {"key": "lora_hps", "label": "LoRA: HPS reward", "type": "float", "default": 0.5, "min": 0, "max": 2, "step": 0.05,
+         "targets": [["354", "strength_3"]], "hidden": True},
+        {"key": "smooth", "label": "Pose smoothing", "type": "float", "default": 0.7, "min": 0, "max": 1, "step": 0.05,
+         "targets": [["532", "smooth_alpha"]], "hidden": True},
     ]
-    write("wan-animate2-motion", g, {
+    write("dreamofm-ultimate-motion", g, {
         "name": "Motion transfer",
-        "description": "Wan Animate 2: your character performs the motion from a driving video. Background follows the prompt.",
+        "description": "DREAMOFM ultimate motion: Wan 2.2 Animate copies the pose and face motion of a driving video onto your character.",
         "output": "video", "preset": True, "order": 3,
-        "size": {"width": "width", "height": "height", "from": "image", "multiple": 16},
-        "models": ["wan_animate_2_int8_convrot.safetensors", "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
-                   "clip_vision_h.safetensors", "Wan2_1_VAE_bf16.safetensors"],
+        "size": {"width": "width", "height": "height"},
+        "models": ["Wan2_2-Animate-14B_fp8_scaled_e4m3fn_KJ_v2.safetensors", "vitpose_h_wholebody_model.onnx", "yolov10m.onnx"],
         "fields": fields,
     })
 
@@ -214,4 +193,4 @@ def wan_animate2():
 wan22_i2v(fast=False)
 wan22_i2v(fast=True)
 wan22_5b()
-wan_animate2()
+ultimate_motion()

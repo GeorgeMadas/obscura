@@ -3,7 +3,7 @@
 #   - /workspace/ComfyUI at a pinned commit, plus pinned custom node packs (list below)
 #   - its own venv /venv/comfy with the same torch build as /venv/main (cu128, needed for Blackwell)
 #   - supervisor service "comfyui" on 127.0.0.1:18188 and the portal entry "ComfyUI" (10200 -> 18188)
-#   - the Wan 2.2 / Wan Animate models (~97 GB, deploy/prefetch_comfy.py)
+#   - the Wan 2.2 / Wan Animate models (~80 GB, deploy/prefetch_comfy.py)
 # Never runs a workflow.
 set -eo pipefail
 log(){ echo "[comfyui $(date +%T)] $*"; }
@@ -73,7 +73,7 @@ if "ComfyUI" not in apps:
     print("portal entry added")
 EOF
 
-log "Models (~97 GB)"
+log "Models (~80 GB)"
 HF_HOME=/workspace/.hf_home /venv/main/bin/python "$APP/deploy/prefetch_comfy.py"
 
 until supervisorctl pid >/dev/null 2>&1; do sleep 5; done

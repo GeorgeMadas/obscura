@@ -5,9 +5,9 @@ then this plan, phase by phase. Each phase ends with a **Check**. Don't move on 
 Written 2026-10-02.
 
 > **Status (2026-10-04): implemented, phases 0–8 done.** What changed from this plan while building it:
-> - Motion transfer uses **Wan Animate 2** (`Comfy-Org/Wan-Animate-2`), which ComfyUI's own templates now ship
->   instead of Wan 2.2 Animate. It needs no pose-preprocessing nodes, so `ComfyUI-WanAnimatePreprocess` isn't installed.
->   The preset renders one segment (default 81 frames) from the start of the driving video.
+> - Motion transfer is the user's own **DREAMOFM ultimate motion** workflow (kijai WanVideoWrapper + Wan 2.2 Animate 14B
+>   with ViTPose/YOLO pose and face detection), converted to API format in `deploy/presets/`. A first version used
+>   Wan Animate 2 (`Comfy-Org/Wan-Animate-2`); the user replaced it on 2026-10-04 and its model was deleted.
 > - ComfyUI got its own venv (`/venv/comfy`) from the start, so nodes installed through ComfyUI-Manager can't
 >   change Obscura's packages.
 > - Everything is installed by `deploy/install_comfyui.sh` (also run by `deploy/provision.sh`); see SETUP.md step 9.

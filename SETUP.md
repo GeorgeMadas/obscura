@@ -16,8 +16,8 @@ Snapshot of the reference instance this guide reproduces (2026-10-01):
 | External port | `10100` → internal `17860`, behind Caddy token auth |
 | Models | `$HF_HOME` = `/workspace/.hf_home` (~75 GB, list in step 5) |
 | ComfyUI | `/workspace/ComfyUI`, venv `/venv/comfy`, service `comfyui` on `127.0.0.1:18188`, portal `ComfyUI` `10200` → `18188` (step 9) |
-| Video models | `/workspace/ComfyUI/models` (~97 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan Animate 2, Wan 2.2 Animate + pose models) |
-| Disk | **≥ 300 GB** (Qwen ~75 GB + video models ~97 GB + two venvs ~20 GB + outputs) |
+| Video models | `/workspace/ComfyUI/models` (~80 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan 2.2 Animate + pose models) |
+| Disk | **≥ 300 GB** (Qwen ~75 GB + video models ~80 GB + two venvs ~20 GB + outputs) |
 | Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor) |
 | Claude extras | `~/.claude/settings.json`, 13 skills, 2 memories (step 7) |
 
@@ -214,11 +214,12 @@ instance) and telling them it's ready to test.
 ## 9. ComfyUI (video workflows)
 
 Obscura's **Workflows** tab runs ComfyUI graphs: the built-in video presets (Image → Video 14B, its 4-step
-fast version, Motion transfer with Wan Animate 2, and the 5B draft model) plus any workflow the user imports.
+fast version, Motion transfer (the user's DREAMOFM ultimate motion workflow: Wan 2.2 Animate with
+pose detection), and the 5B draft model) plus any workflow the user imports.
 `deploy/provision.sh` does this step automatically on new instances; by hand it is one script:
 
 ```bash
-bash /workspace/qwen-image/deploy/install_comfyui.sh   # idempotent; ~97 GB of models
+bash /workspace/qwen-image/deploy/install_comfyui.sh   # idempotent; ~80 GB of models
 ```
 
 What it sets up:
@@ -232,7 +233,7 @@ What it sets up:
   entry `ComfyUI`: external `10200` → `18188` behind Caddy token auth.
 - Models from `deploy/prefetch_comfy.py` into `/workspace/ComfyUI/models/{diffusion_models,loras,text_encoders,vae,clip_vision}`.
 - Presets live in `workflows/` (API graph + `.meta.json` form). Regenerate them with
-  `python deploy/build_presets.py`; workflows the user imports are saved there too and synced through git.
+  `python deploy/build_presets.py` (Motion transfer's graph comes from `deploy/presets/`); workflows the user imports are saved there too and synced through git.
 
 How the GPU is shared: Qwen keeps ~60–88 GB of VRAM while idle, so a ComfyUI job first moves Qwen (and the
 prompt rewriter) to CPU RAM, runs, then asks ComfyUI to free its VRAM (`POST /free`). The next image render

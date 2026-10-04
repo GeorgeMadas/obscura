@@ -1,6 +1,6 @@
-"""Download the ComfyUI video models (Wan 2.2 I2V 14B, TI2V 5B, Wan Animate 2, Wan 2.2 Animate) into ComfyUI/models.
+"""Download the ComfyUI video models (Wan 2.2 I2V 14B, TI2V 5B, Wan 2.2 Animate + pose models) into ComfyUI/models.
 
-Files are fetched through the Hub and moved into place under the names the workflows expect (~97 GB).
+Files are fetched through the Hub and moved into place under the names the workflows expect (~80 GB).
 Already-present files with the right size are skipped, so this is safe to rerun.
 """
 import os
@@ -29,12 +29,12 @@ FILES = [
     # Wan 2.2 TI2V 5B drafts (uses the 2.2 VAE)
     (WAN22, "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "diffusion_models"),
     (WAN22, "split_files/vae/wan2.2_vae.safetensors", "vae"),
-    # Wan Animate 2 motion transfer
-    (ANIMATE2, "diffusion_models/wan_animate_2_int8_convrot.safetensors", "diffusion_models"),
+    # From the Wan Animate 2 repo; the Wan Animate 2 model itself was dropped (Motion transfer uses Wan 2.2 Animate).
+    # clip_vision_h is used by Motion transfer; the rank64 LoRA and bf16 VAE by the user's SCAIL2 workflow.
     (ANIMATE2, "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors", "loras"),
     (ANIMATE2, "clip_vision/clip_vision_h.safetensors", "clip_vision"),
     (ANIMATE2, "vae/Wan2_1_VAE_bf16.safetensors", "vae"),
-    # The user's "ultimate motion" workflow (kijai WanVideoWrapper + Wan 2.2 Animate with pose detection)
+    # Motion transfer: the user's DREAMOFM ultimate motion workflow (kijai WanVideoWrapper + Wan 2.2 Animate)
     ("Kijai/WanVideo_comfy_fp8_scaled", "Wan22Animate/Wan2_2-Animate-14B_fp8_scaled_e4m3fn_KJ_v2.safetensors", "diffusion_models"),
     ("Kijai/WanVideo_comfy", "Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank256_bf16.safetensors", "loras"),
     ("Kijai/WanVideo_comfy", "Pusa/Wan21_PusaV1_LoRA_14B_rank512_bf16.safetensors", "loras"),
