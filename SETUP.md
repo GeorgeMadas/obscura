@@ -4,7 +4,7 @@
 themselves and then asks you to follow this file. Do the steps in order. Every step ends with a
 **Check**; do not continue past a failing check — fix it or report it to the user.
 
-Snapshot of the reference instance this guide reproduces (2026-10-01):
+Snapshot of the reference instance this guide reproduces (updated 2026-10-04):
 
 | Thing | Value |
 |---|---|
@@ -15,7 +15,7 @@ Snapshot of the reference instance this guide reproduces (2026-10-01):
 | Service | supervisor program `qwen-image`, portal name `Qwen Image` |
 | External port | `10100` → internal `17860`, behind Caddy token auth |
 | Models | `$HF_HOME` = `/workspace/.hf_home` (~75 GB, list in step 5) |
-| ComfyUI | `/workspace/ComfyUI`, venv `/venv/comfy`, service `comfyui` on `127.0.0.1:18188`, portal `ComfyUI` `10200` → `18188` (step 9) |
+| ComfyUI | `/workspace/ComfyUI`, venv `/venv/comfy`, service `comfyui` on `127.0.0.1:18188` (**starts on demand**, not at boot), portal `ComfyUI` `10200` → `18188` (step 9) |
 | Video models | `/workspace/ComfyUI/models` (~80 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan 2.2 Animate + pose models) |
 | Disk | **≥ 300 GB** (Qwen ~75 GB + video models ~80 GB + two venvs ~20 GB + outputs) |
 | Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor) |
@@ -150,7 +150,8 @@ What it downloads into `$HF_HOME` (`/workspace/.hf_home`):
 
 - `Qwen/Qwen-Image-2.1-PE-T2I` @ `f3ed7985` and `Qwen/Qwen-Image-2.1-PE-I2I` @ `72927bc0` — the official
   prompt rewriters (Qwen3.5-VL 9B, ~19 GB each). `prompt_rewriter.py` loads them lazily on the first
-  rewrite; only one sits on the GPU at a time (~20 GB), the other waits in CPU RAM.
+  rewrite; only one is on the GPU at a time (~20 GB), and it is moved to CPU RAM before every render
+  (see "How the GPU is used" below). Rewrites are fast only with the step 3 kernels installed.
 
 Style LoRAs (WarmBloodAban, prithivMLmods, SimpleTuner, AIImageStudio, e-n-v-y, Viggle, …) are
 **not** prefetched — `app.py` downloads each one the first time it's picked in the UI.
@@ -213,6 +214,19 @@ holding GPU memory. **Do not** generate an image to test.
 Finish by giving the user the `direct_url` (it needs their `OPEN_BUTTON_TOKEN`, as on the old
 instance) and telling them it's ready to test.
 
+### How the GPU is used (so you can explain an out-of-memory error)
+
+Idle, Obscura holds the Qwen pipeline on the GPU (~30–40 GB measured with "Full" BF16 right after a restart; more
+once PyTorch has cached memory from renders). Everything
+else is kept off the GPU while an image renders, so the render gets the rest of the memory:
+- **Prompt rewriter** (~20 GB): moved to the GPU for a rewrite, then back to CPU RAM at the start of the next
+  render or upscale (`clear_gpu_for_render` in `app.py`). A render queued during a rewrite waits for it.
+- **ComfyUI**: not running until needed; when it runs, Obscura asks it to free its VRAM before each render.
+- The rewrite popup can be **minimized** to a status pill (bottom right); the app stays usable and the popup
+  reopens with the full prompt when the rewrite finishes.
+
+Diagnose with `nvidia-smi` (which processes hold memory) before changing anything.
+
 ---
 
 ## 9. ComfyUI (video workflows)
@@ -239,14 +253,16 @@ What it sets up:
 - Presets live in `workflows/` (API graph + `.meta.json` form). Regenerate them with
   `python deploy/build_presets.py` (Motion transfer's graph comes from `deploy/presets/`); workflows the user imports are saved there too and synced through git.
 
-How the GPU is shared: Qwen keeps ~60–88 GB of VRAM while idle, so a ComfyUI job first moves Qwen (and the
-prompt rewriter) to CPU RAM, runs, then asks ComfyUI to free its VRAM (`POST /free`). The next image render
+How the GPU is shared: Qwen keeps ~30–80 GB of VRAM while idle, so a ComfyUI job first moves
+Qwen (and the prompt rewriter) to CPU RAM, runs, then asks ComfyUI to free its VRAM (`POST /free`). The next image render
 moves Qwen back, which takes several seconds ("Loading Qwen back to GPU"). Jobs share Obscura's single queue, so
 a video never overlaps a render. Runs started in the ComfyUI **editor** don't go through that queue: use
 **Free GPU for the editor** on the Workflows tab first.
 
-ComfyUI does **not** autostart (`autostart=false`), so it holds no VRAM next to Qwen. Obscura starts it on demand
-(`supervisorctl start comfyui`) when the user clicks **ComfyUI editor** or runs a workflow.
+ComfyUI does **not** autostart (`autostart=false` in `deploy/service/comfyui.conf`), so it holds no VRAM next to
+Qwen. Obscura starts it on demand (`comfy_bridge.ensure_running` → `supervisorctl start comfyui`, waits until it
+answers) when the user clicks **ComfyUI editor** (the new tab shows "Starting ComfyUI…" for 20–60 s) or runs a
+workflow. Once started it stays up until the next restart.
 
 **Check** (never run a workflow to test):
 ```bash
@@ -259,9 +275,16 @@ vast-capabilities | jq '.services[] | select(.name=="ComfyUI") | .direct_url'
 ## Keeping instances in sync
 
 Both instances are clones of `GeorgeMadas/obscura`. After changing app code: commit, `git push`;
-on the other instance `git pull` then `supervisorctl restart qwen-image`. If `deploy/requirements.txt`
-changed, rerun step 3 before restarting. If ComfyUI files changed (`deploy/install_comfyui.sh`,
-`deploy/service/comfyui.*`, `deploy/prefetch_comfy.py`), rerun step 9. Never commit `outputs/` or `history.jsonl` (gitignored).
+on the other instance `git pull` then `supervisorctl restart qwen-image`. If step 3 changed
+(`deploy/requirements.txt` or the kernel installs), rerun step 3 before restarting. If ComfyUI files changed
+(`deploy/install_comfyui.sh`, `deploy/service/comfyui.*`, `deploy/prefetch_comfy.py`), rerun step 9.
+Never commit `outputs/` or `history.jsonl` (gitignored). `settings.json` holds the model the user picked in the
+UI; it's in git as the default for new instances, but leave local changes to it uncommitted unless the user asks.
+
+**Catching up an instance set up before 2026-10-04** (after `git pull`):
+1. Install the rewriter kernels: the `flash-linear-attention` and `causal-conv1d` lines from step 3 (~6 min compile).
+2. ComfyUI on demand: `cp deploy/service/comfyui.conf /etc/supervisor/conf.d/ && supervisorctl reread && supervisorctl update && supervisorctl stop comfyui`.
+3. `supervisorctl restart qwen-image`, and tell the user to hard-refresh the page (Ctrl+Shift+R).
 
 ## Troubleshooting
 
@@ -271,6 +294,8 @@ changed, rerun step 3 before restarting. If ComfyUI files changed (`deploy/insta
 | Service exits instantly, log says it was skipped | Portal entry name isn't exactly `Qwen Image` → step 4 |
 | Portal link 502 | App still loading the model; watch the log |
 | `Checksum verification failed` | Corrupt GGUF download → delete that blob under `$HF_HOME/hub/models--KasugaiSakura--*/blobs/` and rerun prefetch |
+| Render says "The GPU ran out of memory" | Something else holds VRAM: check `nvidia-smi`. Normally the rewriter and ComfyUI are cleared before each render; otherwise use the Small model or a smaller size |
+| Rewrites take ~2 min; log shows `causal_conv1d` / `flash-linear-attention` "falling back" warnings | Step 3 kernels missing → install them, restart `qwen-image` |
 | Rewrite popup says the GPU ran out of memory | A 4MP render + the ~20 GB rewriter didn't fit at once → wait for the render, or turn the rewrite toggle (wand icon) off |
 | CUDA OOM at load | GPU < ~48 GB → user switches to "Small" in the UI (writes `settings.json`) |
 | Workflows tab says "ComfyUI is off" | Normal: it starts on the editor button or a workflow run. If that fails, check `/var/log/portal/comfyui.log` |
