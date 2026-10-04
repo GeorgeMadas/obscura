@@ -49,6 +49,9 @@ cp -n "$APP"/deploy/claude/memory/*.md ~/.claude/projects/-workspace/memory/
 # 3. Python packages
 log "Installing Python packages"
 uv pip install --python $PY -r "$APP/deploy/requirements.txt" || log "pip install FAILED"
+# Fast kernels for the prompt rewriter; causal-conv1d compiles against the installed torch (~6 min)
+uv pip install --python $PY flash-linear-attention==0.5.2 || log "flash-linear-attention install FAILED"
+MAX_JOBS=16 uv pip install --python $PY --no-build-isolation causal-conv1d==1.7.0 ninja==1.13.2 || log "causal-conv1d install FAILED"
 $PY -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 
 # 4. Service files (portal entry comes from PORTAL_CONFIG in the template)

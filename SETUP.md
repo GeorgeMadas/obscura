@@ -82,13 +82,17 @@ git config --global --add safe.directory /workspace/qwen-image
 ```bash
 cd /workspace/qwen-image
 uv pip install --python /venv/main/bin/python -r deploy/requirements.txt
+# Fast kernels for the prompt rewriter (Qwen3.5 linear-attention layers); without them it runs a slow fallback.
+# causal-conv1d compiles from source (~6 min) and needs --no-build-isolation so it builds against the installed torch.
+uv pip install --python /venv/main/bin/python flash-linear-attention==0.5.2
+MAX_JOBS=16 uv pip install --python /venv/main/bin/python --no-build-isolation causal-conv1d==1.7.0 ninja==1.13.2
 ```
 
 `diffusers` is pinned to a git commit because `QwenImage21Pipeline` isn't in a release; keep the pin.
 
 **Check:**
 ```bash
-/venv/main/bin/python -c "from diffusers import QwenImage21Pipeline; import spandrel, gguf, peft, fastapi, uvicorn; print('ok')"
+/venv/main/bin/python -c "from diffusers import QwenImage21Pipeline; import spandrel, gguf, peft, fastapi, uvicorn, fla, causal_conv1d; print('ok')"
 ```
 
 ## 4. Service + portal entry
