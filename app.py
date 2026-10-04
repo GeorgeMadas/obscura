@@ -299,6 +299,15 @@ def unpark_qwen(job: dict | None = None):
     QWEN["on_gpu"] = True
 
 
+def clear_gpu_for_render(job: dict):
+    """Free VRAM that a render can use: move the idle prompt rewriter (~18 GB) to CPU RAM and ask ComfyUI to
+    drop its cached memory. Call with GPU_LOCK held."""
+    job["phase"] = "Freeing GPU memory"
+    prompt_rewriter.park()  # waits for a rewrite in progress
+    comfy_bridge.free()
+    torch.cuda.empty_cache()
+
+
 # ============================================================
 # LoRA Adapter Loading Helpers
 # ============================================================
@@ -1107,6 +1116,7 @@ def _worker():
                 if kind == "comfy":
                     job["result"] = run_comfy(job)
                 else:
+                    clear_gpu_for_render(job)
                     if kind != "upscale":
                         unpark_qwen(job)
                     job["result"] = (run_upscale(job) if kind == "upscale"
