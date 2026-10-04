@@ -1,6 +1,6 @@
-"""Download the ComfyUI video models (Wan 2.2 I2V 14B, Wan 2.2 TI2V 5B, Wan Animate 2) into ComfyUI/models.
+"""Download the ComfyUI video models (Wan 2.2 I2V 14B, TI2V 5B, Wan Animate 2, Wan 2.2 Animate) into ComfyUI/models.
 
-Files are fetched through the Hub and moved into place under the names the workflows expect (~68 GB).
+Files are fetched through the Hub and moved into place under the names the workflows expect (~97 GB).
 Already-present files with the right size are skipped, so this is safe to rerun.
 """
 import os
@@ -34,6 +34,15 @@ FILES = [
     (ANIMATE2, "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors", "loras"),
     (ANIMATE2, "clip_vision/clip_vision_h.safetensors", "clip_vision"),
     (ANIMATE2, "vae/Wan2_1_VAE_bf16.safetensors", "vae"),
+    # The user's "ultimate motion" workflow (kijai WanVideoWrapper + Wan 2.2 Animate with pose detection)
+    ("Kijai/WanVideo_comfy_fp8_scaled", "Wan22Animate/Wan2_2-Animate-14B_fp8_scaled_e4m3fn_KJ_v2.safetensors", "diffusion_models"),
+    ("Kijai/WanVideo_comfy", "Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank256_bf16.safetensors", "loras"),
+    ("Kijai/WanVideo_comfy", "Pusa/Wan21_PusaV1_LoRA_14B_rank512_bf16.safetensors", "loras"),
+    ("alibaba-pai/Wan2.2-Fun-Reward-LoRAs", "Wan2.2-Fun-A14B-InP-low-noise-HPS2.1.safetensors", "loras"),
+    # Pose detection for WanAnimatePreprocess; the ViTPose .onnx loads its weights from the .bin beside it
+    ("Kijai/vitpose_comfy", "onnx/vitpose_h_wholebody_model.onnx", "detection"),
+    ("Kijai/vitpose_comfy", "onnx/vitpose_h_wholebody_data.bin", "detection"),
+    ("Wan-AI/Wan2.2-Animate-14B", "process_checkpoint/det/yolov10m.onnx", "detection"),
 ]
 
 api = HfApi()
