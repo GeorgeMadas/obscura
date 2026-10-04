@@ -36,8 +36,9 @@ fi
 if ! command -v claude >/dev/null; then
   log "Installing Claude Code"
   curl -fsSL https://claude.ai/install.sh | bash
-  grep -q '.local/bin' /root/.bashrc || echo 'export PATH="/root/.local/bin:$PATH"' >> /root/.bashrc
 fi
+# Vast's .bashrc reloads /etc/environment (resetting PATH), so expose claude via /usr/local/bin
+ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 # 7. Claude extras
 mkdir -p ~/.claude/skills ~/.claude/projects/-workspace/memory
