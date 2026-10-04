@@ -10,7 +10,7 @@
   <link rel="preload" href="/static/vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/vendor/phosphor/regular.css">
   <link rel="stylesheet" href="/static/vendor/phosphor/fill.css">
-  <link rel="stylesheet" href="/static/styles.css?v=19">
+  <link rel="stylesheet" href="/static/styles.css?v=20">
 </head>
 <body>
   <!-- Reusable brand mark -->
@@ -41,6 +41,9 @@
         </a>
         <a class="rail-link" href="#/prompts" data-nav="prompts" role="listitem">
           <i class="ph ph-bookmarks-simple" aria-hidden="true"></i><span>Prompts</span>
+        </a>
+        <a class="rail-link" href="#/workflows" data-nav="workflows" role="listitem">
+          <i class="ph ph-film-strip" aria-hidden="true"></i><span>Workflows</span>
         </a>
       </div>
       <div class="rail-foot">
@@ -236,6 +239,25 @@
         <p>Save the prompts you reach for often, with a title so they're easy to find.</p>
       </div>
     </main>
+
+    <!-- ===================== WORKFLOWS ===================== -->
+    <main class="view view-workflows" id="view-workflows" aria-label="Workflows" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Workflows</h1>
+          <p class="sub">Video presets and your own ComfyUI workflows. Results land in the Library.</p>
+        </div>
+        <div class="wf-head-actions">
+          <a class="btn btn-ghost" id="wfEditor" target="_blank" rel="noopener"><i class="ph ph-arrow-square-out"></i>ComfyUI editor</a>
+          <button class="btn btn-primary" id="wfImportBtn" type="button"><i class="ph ph-upload-simple"></i>Import</button>
+        </div>
+      </header>
+      <div class="wf-status" id="wfStatus"></div>
+      <div class="wf-layout">
+        <nav class="wf-list" id="wfList" aria-label="Workflows"></nav>
+        <section class="wf-panel" id="wfPanel" aria-live="polite"></section>
+      </div>
+    </main>
   </div>
 
   <!-- Lightbox -->
@@ -245,6 +267,7 @@
       <div class="lb-layer" id="lbLayer">
         <img id="lbBefore" alt="" hidden>
         <img id="lbImg" alt="">
+        <video id="lbVideo" controls loop playsinline preload="metadata" hidden></video>
       </div>
       <div class="lb-divider" id="lbDivider" hidden>
         <button class="lb-handle" id="lbHandle" type="button" role="slider" aria-label="Drag to compare" aria-valuemin="0" aria-valuemax="100"><i class="ph ph-arrows-left-right"></i></button>
@@ -271,6 +294,7 @@
       <button class="toggle lb-compare-toggle" id="lbCompareToggle" type="button" aria-pressed="true" hidden><i class="ph ph-split-horizontal"></i><span>Before / after slider</span></button>
       <div class="lb-actions">
         <button class="btn btn-primary" id="lbReuse" type="button"><i class="ph ph-arrow-counter-clockwise"></i>Reuse settings</button>
+        <button class="btn btn-quiet" id="lbAnimate" type="button"><i class="ph ph-film-strip"></i>Animate</button>
         <div class="lb-upscale" id="lbUpscale">
           <span class="field-label">Upscale 4x</span>
           <div class="lb-row">
@@ -306,7 +330,7 @@
         <li><span>Confirm rewritten prompt</span><span><kbd>Ctrl</kbd><kbd>Enter</kbd></span></li>
         <li><span>New line in prompt</span><span><kbd>Shift</kbd><kbd>Enter</kbd></span></li>
         <li><span>Focus prompt or search</span><span><kbd>/</kbd></span></li>
-        <li><span>Create, Library, Styles, Prompts</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></span></li>
+        <li><span>Create, Library, Styles, Prompts, Workflows</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd></span></li>
         <li><span>Browse in full view</span><span><kbd>←</kbd><kbd>→</kbd></span></li>
         <li><span>Zoom in full view</span><span><kbd>Scroll</kbd> or <kbd>+</kbd><kbd>-</kbd></span></li>
         <li><span>Fit to screen</span><span><kbd>0</kbd></span></li>
@@ -370,9 +394,58 @@
     <button class="icon-btn" id="selClear" type="button" aria-label="Clear selection" title="Clear selection (Esc)"><i class="ph ph-x"></i></button>
   </div>
 
+  <!-- Import a ComfyUI workflow -->
+  <div class="modal" id="wfImport" role="dialog" aria-modal="true" aria-labelledby="wfImportTitle" hidden>
+    <form class="modal-card wf-modal" id="wfImportForm" autocomplete="off">
+      <div class="modal-head"><h2 id="wfImportTitle">Import a workflow</h2>
+        <button class="icon-btn" type="button" data-close aria-label="Close"><i class="ph ph-x"></i></button></div>
+      <p class="hint">In ComfyUI open the workflow, then <b>Workflow → Export (API)</b>. Drop that file here or paste its JSON.</p>
+      <label class="input-label" for="wfImportName">Name</label>
+      <input class="input" id="wfImportName" maxlength="80" placeholder="My upscale workflow" required>
+      <label class="input-label" for="wfImportJson">API JSON</label>
+      <textarea class="input wf-json" id="wfImportJson" rows="8" spellcheck="false" placeholder='{"3": {"class_type": "KSampler", "inputs": {...}}}' required></textarea>
+      <div class="wf-modal-actions">
+        <label class="btn btn-ghost btn-sm"><i class="ph ph-folder-open"></i>Choose file<input type="file" id="wfImportFile" accept=".json,application/json" hidden></label>
+        <button class="btn btn-primary btn-sm" type="submit">Import</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Edit a workflow's form fields -->
+  <div class="modal" id="wfFields" role="dialog" aria-modal="true" aria-labelledby="wfFieldsTitle" hidden>
+    <div class="modal-card wf-modal wf-fields-card">
+      <div class="modal-head"><h2 id="wfFieldsTitle">Edit fields</h2>
+        <button class="icon-btn" type="button" data-close aria-label="Close"><i class="ph ph-x"></i></button></div>
+      <label class="input-label" for="wfFieldsName">Workflow name</label>
+      <input class="input" id="wfFieldsName" maxlength="80">
+      <div class="wf-field-rows" id="wfFieldRows"></div>
+      <div class="wf-add">
+        <span class="field-label">Add a field</span>
+        <div class="input-row">
+          <select class="input" id="wfAddNode" aria-label="Node"></select>
+          <select class="input" id="wfAddInput" aria-label="Input"></select>
+          <button class="btn btn-quiet btn-sm" id="wfAddBtn" type="button"><i class="ph ph-plus"></i>Add</button>
+        </div>
+      </div>
+      <div class="wf-modal-actions">
+        <button class="btn btn-ghost btn-sm" type="button" data-close>Cancel</button>
+        <button class="btn btn-primary btn-sm" id="wfFieldsSave" type="button">Save fields</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pick an image or video from the Library -->
+  <div class="modal" id="wfPicker" role="dialog" aria-modal="true" aria-labelledby="wfPickerTitle" hidden>
+    <div class="modal-card wf-modal wf-picker-card">
+      <div class="modal-head"><h2 id="wfPickerTitle">Pick from Library</h2>
+        <button class="icon-btn" type="button" data-close aria-label="Close"><i class="ph ph-x"></i></button></div>
+      <div class="wf-picker-grid" id="wfPickerGrid"></div>
+    </div>
+  </div>
+
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <input type="file" id="filePicker" accept="image/*" hidden>
-  <script src="/static/app.js?v=20" defer></script>
+  <script src="/static/app.js?v=21" defer></script>
 </body>
 </html>

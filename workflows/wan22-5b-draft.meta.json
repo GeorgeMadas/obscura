@@ -1,0 +1,162 @@
+{
+  "name": "Image → Video draft (5B)",
+  "description": "Wan 2.2 TI2V 5B at 720p, 24 fps. Much faster than 14B; good for trying ideas.",
+  "output": "video",
+  "preset": true,
+  "order": 4,
+  "size": {
+    "width": "width",
+    "height": "height",
+    "from": "image",
+    "multiple": 32
+  },
+  "models": [
+    "wan2.2_ti2v_5B_fp16.safetensors",
+    "wan2.2_vae.safetensors"
+  ],
+  "fields": [
+    {
+      "key": "prompt",
+      "label": "Prompt",
+      "type": "text",
+      "default": "The camera slowly pushes in while the subject turns their head and smiles, hair moving in a light breeze.",
+      "targets": [
+        [
+          "2",
+          "text"
+        ]
+      ],
+      "help": "Describe the motion and the camera. The image already sets the look."
+    },
+    {
+      "key": "negative",
+      "label": "Negative prompt",
+      "type": "text",
+      "default": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "targets": [
+        [
+          "3",
+          "text"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "image",
+      "label": "Start image",
+      "type": "image",
+      "default": "",
+      "targets": [
+        [
+          "6",
+          "image"
+        ]
+      ]
+    },
+    {
+      "key": "width",
+      "label": "Width",
+      "type": "int",
+      "default": 1280,
+      "min": 256,
+      "max": 1920,
+      "step": 32,
+      "targets": [
+        [
+          "8",
+          "width"
+        ]
+      ]
+    },
+    {
+      "key": "height",
+      "label": "Height",
+      "type": "int",
+      "default": 704,
+      "min": 256,
+      "max": 1920,
+      "step": 32,
+      "targets": [
+        [
+          "8",
+          "height"
+        ]
+      ]
+    },
+    {
+      "key": "length",
+      "label": "Frames",
+      "type": "int",
+      "default": 121,
+      "min": 5,
+      "max": 241,
+      "step": 4,
+      "targets": [
+        [
+          "8",
+          "length"
+        ]
+      ],
+      "help": "121 frames is about 5 seconds at 24 fps. Use 4n+1."
+    },
+    {
+      "key": "fps",
+      "label": "FPS",
+      "type": "float",
+      "default": 24,
+      "min": 8,
+      "max": 60,
+      "step": 1,
+      "targets": [
+        [
+          "11",
+          "fps"
+        ]
+      ]
+    },
+    {
+      "key": "steps",
+      "label": "Steps",
+      "type": "int",
+      "default": 20,
+      "min": 4,
+      "max": 50,
+      "step": 1,
+      "targets": [
+        [
+          "9",
+          "steps"
+        ]
+      ]
+    },
+    {
+      "key": "cfg",
+      "label": "CFG",
+      "type": "float",
+      "default": 5.0,
+      "min": 1,
+      "max": 10,
+      "step": 0.5,
+      "targets": [
+        [
+          "9",
+          "cfg"
+        ]
+      ]
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "default": 0,
+      "min": 0,
+      "max": 2147483647,
+      "targets": [
+        [
+          "9",
+          "seed"
+        ]
+      ]
+    }
+  ]
+}

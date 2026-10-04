@@ -93,6 +93,24 @@
     if (id === S.cfg.custom_lora || id === S.cfg.local_lora) return "Custom";
     return (loraSpec(id) || {}).category || "Style";
   }
+  const isVideo = (rec) => rec && rec.media === "video";
+  const isComfy = (rec) => rec && rec.kind === "comfy";
+  const fmtDur = (s) => (s == null ? "" : s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`);
+  // Video tiles show their first frame and play muted while hovered
+  function hoverPlay(el, rec) {
+    let v = null;
+    el.addEventListener("pointerenter", () => {
+      if (v || reduceMotion) return;
+      v = h("video", { class: "tile-video", src: rec.url, muted: true, loop: true, playsinline: true, autoplay: true, preload: "auto" });
+      v.muted = true;
+      v.addEventListener("playing", () => v && v.classList.add("on"));
+      // Right above the poster image, below the badges and hover actions
+      el.querySelector("img").after(v);
+      v.play().catch(() => {});
+    });
+    el.addEventListener("pointerleave", () => { if (v) { v.pause(); v.remove(); v = null; } });
+  }
+  const videoBadge = (rec) => h("span", { class: "video-badge" }, icon("play", true), rec.duration ? fmtDur(rec.duration) : "Video");
   const fmtSecs = (s) => (s < 60 ? `${Math.max(1, Math.round(s))}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`);
   const fmtDate = (t) => (t ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(t * 1000)) : "");
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
@@ -109,7 +127,7 @@
   }
 
   // ---------------------------------------------------------------- router
-  const VIEWS = ["create", "library", "styles", "prompts"];
+  const VIEWS = ["create", "library", "styles", "prompts", "workflows"];
   function route() {
     const [path] = location.hash.replace(/^#\/?/, "").split("?");
     const view = VIEWS.includes(path) ? path : "create";
@@ -120,6 +138,7 @@
       if (view === "library") ensureLibrary();
       if (view === "styles") renderStyles();
       if (view === "prompts") ensurePrompts();
+      if (view === "workflows") ensureWorkflows(); else stopWfStatus();
       if (view === "create") requestAnimationFrame(() => { placeThumb(); if (feedColumns() !== FEED.cols) renderFeed(); });
       closeInspector();
     };
@@ -839,25 +858,35 @@
     for (const id of ids) if (!res.items.find((j) => j.id === id)) onJobChange({ ...S.jobs.get(id), status: "error", error: "The server restarted before this finished." });
     for (const job of activeJobs()) updateJobTile(job);
     updateQueue();
+    renderWfRuns();
   }
   function onJobChange(job) {
     S.jobs.set(job.id, job);
     const away = $("#app").dataset.view !== "create" || document.hidden;
     const batch = S.jobBatch.get(job.id);
     if (job.status === "done") {
-      const rec = job.result;
+      const recs = job.results && job.results.length ? job.results : [job.result];
+      const rec = recs[0];
       S.jobs.delete(job.id);
-      FEED.fresh.add(rec.file);
-      S.feed.items.unshift(rec);
-      S.feed.total++;
-      if (!S.seedLocked) { S.seed = rec.seed; $("#seed").value = S.seed; }
-      const spec = loraSpec(rec.lora); if (spec) spec.loaded = true;
-      if (rec.lora && !S.covers[rec.lora]) S.covers[rec.lora] = rec.thumb;
-      if (S.lib.loaded) { S.lib.items.unshift(rec); S.lib.total++; if (!S.lib.q) renderLibrary(true); }
+      for (const r of [...recs].reverse()) {
+        FEED.fresh.add(r.file);
+        S.feed.items.unshift(r);
+        S.feed.total++;
+        if (S.lib.loaded) { S.lib.items.unshift(r); S.lib.total++; }
+      }
+      if (S.lib.loaded && !S.lib.q) renderLibrary(true);
+      if (!isComfy(rec)) {
+        if (!S.seedLocked) { S.seed = rec.seed; $("#seed").value = S.seed; }
+        const spec = loraSpec(rec.lora); if (spec) spec.loaded = true;
+        if (rec.lora && !S.covers[rec.lora]) S.covers[rec.lora] = rec.thumb;
+      }
       const view = { label: "View", fn: () => openLightbox(S.feed.items, S.feed.items.indexOf(rec), "feed") };
+      const wfAway = $("#app").dataset.view !== "create" && $("#app").dataset.view !== "workflows";
       if (batch) {
         // Batches report once, when their last image lands
         if (--batch.left === 0 && away) toast(`${batch.total} images ready.`, { type: "ok", action: view });
+      } else if (isComfy(rec)) {
+        if (wfAway || document.hidden || $("#app").dataset.view === "workflows") toast(`${rec.workflow_name || "Workflow"} finished.`, { type: "ok", action: view });
       } else if (away) toast(!rec.upscaler ? "A render finished." : rec.upscaler.startsWith("Enhanced") ? "Enhance finished." : "Upscale finished.", { type: "ok", action: view });
     } else if (job.status === "error" || job.status === "cancelled") {
       if (batch) { batch.left--; if (job.status === "cancelled") batch.total--; }
@@ -874,6 +903,7 @@
     const job = S.jobs.get(id);
     if (job && job.status === "queued") onJobChange({ ...job, status: "cancelled" });
     else if (job) { job.phase = "Stopping"; updateJobTile(job); }
+    renderWfRuns();
   }
   function updateQueue() {
     const n = activeJobs().length;
@@ -948,24 +978,30 @@
       }
       deleteFiles([rec.file]);
     });
+    const video = isVideo(rec);
+    const actions = isComfy(rec)
+      ? [act("arrow-counter-clockwise", "Reuse workflow settings", () => reuse(rec))]
+      : [act("arrow-counter-clockwise", "Reuse settings", () => { reuse(rec); toast("Settings restored, seed fixed.", { type: "ok" }); }),
+         act("shuffle", "New seed", () => { reuse(rec); S.seedLocked = false; syncControls(); generate(); })];
+    if (!video) {
+      actions.push(act("paint-brush-broad", "Edit", () => editRecord(rec)));
+      if (canEnhance(rec)) actions.push(act("sparkle", "Enhance detail", () => enhance(rec)));
+      actions.push(act("film-strip", "Animate", () => animate(rec)));
+    }
     const el = h("div", {
       class: `ftile ftile-img${rec.mode === "Transparent PNG" ? " alpha" : ""}${SEL.files.has(rec.file) ? " selected" : ""}`,
       role: "button", tabindex: "0", "data-file": rec.file,
-      "aria-label": rec.prompt ? `Open: ${rec.prompt.slice(0, 80)}` : "Open render",
+      "aria-label": rec.prompt ? `Open: ${rec.prompt.slice(0, 80)}` : video ? "Open video" : "Open render",
       onclick: (e) => tileClick(e, rec, S.feed.items, open),
       onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } },
     }, img,
     rec.upscaler ? h("span", { class: "ftile-badge" }, rec.upscaler) : null,
+    video ? videoBadge(rec) : null,
     h("span", { class: "sel-check", "aria-hidden": "true" }, icon("check", false)),
     h("div", { class: "ftile-over" },
-      h("p", {}, rec.prompt || "Untitled"),
-      h("div", { class: "ftile-actions" },
-        act("arrow-counter-clockwise", "Reuse settings", () => { reuse(rec); toast("Settings restored, seed fixed.", { type: "ok" }); }),
-        act("shuffle", "New seed", () => { reuse(rec); S.seedLocked = false; syncControls(); generate(); }),
-        act("paint-brush-broad", "Edit", () => editRecord(rec)),
-        ...(canEnhance(rec) ? [act("sparkle", "Enhance detail", () => enhance(rec))] : []),
-        act("download-simple", "Download", () => downloadFiles([rec])),
-        trash)));
+      h("p", {}, rec.prompt || rec.workflow_name || "Untitled"),
+      h("div", { class: "ftile-actions" }, ...actions, act("download-simple", "Download", () => downloadFiles([rec])), trash)));
+    if (video) hoverPlay(el, rec);
     return el;
   }
   function failedTile(f) {
@@ -1032,6 +1068,7 @@
 
   // ---------------------------------------------------------------- record actions
   function reuse(rec, { withPrompt = true } = {}) {
+    if (isComfy(rec)) return reuseWorkflow(rec);
     if (withPrompt) { $("#prompt").value = rec.prompt; autosize(); }
     // A prompt that came out of the rewriter goes straight to the renderer next time
     if (withPrompt && rec.original_prompt) RW.done.add(rec.prompt.trim());
@@ -1149,12 +1186,15 @@
     const ar = rec.width && rec.height ? `${rec.width}/${rec.height}` : "1";
     const img = h("img", { src: rec.thumb, alt: rec.prompt, loading: "lazy", decoding: "async", style: `aspect-ratio:${ar}` });
     img.addEventListener("load", () => img.classList.add("loaded"));
-    return h("button", {
+    const label = isComfy(rec) ? rec.workflow_name || "Workflow" : rec.upscaler || styleName(rec.lora);
+    const el = h("button", {
       class: `tile${SEL.files.has(rec.file) ? " selected" : ""}`, type: "button", style: `--i:${i % 12}`, "data-file": rec.file,
       onclick: (e) => tileClick(e, rec, S.lib.items, () => openLightbox(S.lib.items, S.lib.items.indexOf(rec), "library")),
-    }, img, h("span", { class: "sel-check", "aria-hidden": "true" }, icon("check", false)), h("div", { class: "tile-over" },
-      h("p", {}, rec.prompt || "Untitled"),
-      h("span", {}, `${rec.upscaler ? rec.upscaler + "  " : styleName(rec.lora) + "  "}${rec.width || ""}×${rec.height || ""}`)));
+    }, img, isVideo(rec) ? videoBadge(rec) : null, h("span", { class: "sel-check", "aria-hidden": "true" }, icon("check", false)), h("div", { class: "tile-over" },
+      h("p", {}, rec.prompt || rec.workflow_name || "Untitled"),
+      h("span", {}, `${label}  ${rec.width || ""}×${rec.height || ""}`)));
+    if (isVideo(rec)) hoverPlay(el, rec);
+    return el;
   }
   function renderLibrary(reset, from = 0) {
     const m = $("#masonry");
@@ -1196,6 +1236,8 @@
   function closeLightbox() {
     if ($("#lightbox").hidden) return;
     $("#lightbox").hidden = true;
+    const vid = $("#lbVideo");
+    vid.pause(); vid.removeAttribute("src"); vid.load();
     resetDelete();
     lastFocus && lastFocus.focus && lastFocus.focus({ preventScroll: true });
   }
@@ -1203,12 +1245,28 @@
     const rec = LB.list[LB.i];
     if (!rec) return closeLightbox();
     const img = $("#lbImg");
+    const vid = $("#lbVideo");
+    const video = isVideo(rec);
     Z.full = false;
-    img.src = rec.thumb;
-    const full = new Image();
-    const target = rec.preview || rec.url;
-    full.onload = () => { if (LB.list[LB.i] === rec && !Z.full) img.src = target; };
-    full.src = target;
+    img.hidden = video;
+    vid.hidden = !video;
+    $("#lbStage").classList.toggle("is-video", video);
+    if (video) {
+      img.removeAttribute("src");
+      vid.poster = rec.thumb;
+      if (vid.getAttribute("src") !== rec.url) vid.src = rec.url;
+      vid.muted = store.get("videoMuted", true);
+      vid.play().catch(() => {});
+    } else {
+      vid.pause();
+      vid.removeAttribute("src");
+      vid.load();
+      img.src = rec.thumb;
+      const full = new Image();
+      const target = rec.preview || rec.url;
+      full.onload = () => { if (LB.list[LB.i] === rec && !Z.full) img.src = target; };
+      full.src = target;
+    }
     img.alt = rec.prompt;
     const layer = $("#lbLayer");
     layer.style.animation = "none"; void layer.offsetWidth; layer.style.animation = "";
@@ -1228,7 +1286,16 @@
     more.querySelector("span").textContent = "Collapse prompt";
     const mode = modeInfo(rec.mode);
     const spec = (k, v, wide) => h("div", { class: wide ? "wide" : "" }, h("dt", {}, k), h("dd", { title: String(v) }, String(v)));
-    $("#lbSpecs").replaceChildren(
+    if (isComfy(rec)) $("#lbSpecs").replaceChildren(
+      spec("Workflow", rec.workflow_name || rec.workflow || "?", true),
+      spec("Size", `${rec.width || "?"}×${rec.height || "?"}`),
+      ...(video ? [spec("Length", rec.frames ? `${rec.frames} frames` : "?"), spec("FPS", rec.fps ?? "?"), spec("Duration", fmtDur(rec.duration) || "?")] : []),
+      ...(rec.seed != null ? [spec("Seed", rec.seed)] : []),
+      ...(rec.steps ? [spec("Steps", rec.steps)] : []),
+      ...(rec.elapsed ? [spec("Render time", fmtSecs(rec.elapsed))] : []),
+      ...(rec.values || []).filter(([k]) => !["Width", "Height", "Frames", "FPS", "Steps"].includes(k)).map(([k, v]) => spec(k, v, String(v).length > 14)),
+    );
+    else $("#lbSpecs").replaceChildren(
       spec("Style", styleName(rec.lora), true),
       spec("Mode", mode ? mode.label : rec.mode),
       spec("Size", `${rec.width || "?"}×${rec.height || "?"}`),
@@ -1244,8 +1311,11 @@
     // A lone item on the last row spans both columns instead of leaving an empty cell
     const cells = $$("#lbSpecs > div:not(.wide)");
     if (cells.length % 2) cells[cells.length - 1].classList.add("wide");
-    $("#lbUpscale").hidden = !canUpscale(rec);
-    $("#lbEnhanceBox").hidden = !canEnhance(rec);
+    $("#lbUpscale").hidden = video || !canUpscale(rec);
+    $("#lbEnhanceBox").hidden = video || !canEnhance(rec);
+    $("#lbEdit").hidden = video;
+    $("#lbAnimate").hidden = video;
+    $("#lbReuse").lastChild.textContent = isComfy(rec) ? "Reuse workflow settings" : "Reuse settings";
     $("#enhStrength").value = enhStrength();
     $("#enhPrompt").value = S.cfg.enhance.default_prompt;
     $("#enhAddOriginal").hidden = !rec.prompt;
@@ -1331,7 +1401,9 @@
   }
   function wireZoom() {
     const stage = $("#lbStage"), img = $("#lbImg");
+    const onVideo = () => isVideo(LB.list[LB.i]);
     stage.addEventListener("wheel", (e) => {
+      if (onVideo()) return;
       e.preventDefault();
       const dy = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
       // Trackpad pinch arrives as ctrl+wheel with small deltas
@@ -1339,6 +1411,7 @@
     }, { passive: false });
     stage.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || e.target.closest(".lb-nav")) return;
+      if (onVideo()) { if (e.target === stage) closeLightbox(); return; }
       if (e.target.closest("#lbDivider, .lb-side")) return;
       Z.drag = { x: e.clientX, y: e.clientY, tx: Z.tx, ty: Z.ty, moved: false, onImg: !!e.target.closest("#lbLayer"), id: e.pointerId };
       stage.setPointerCapture(e.pointerId);
@@ -1568,21 +1641,512 @@
     });
   }
 
+  // ---------------------------------------------------------------- workflows (ComfyUI)
+  // Presets and imported ComfyUI graphs, each with a generated form. Runs share the render queue and land in the Library.
+  const W = { items: [], loaded: false, sel: null, comfy: null, statusTimer: null, vals: {}, rand: {}, media: {}, showHidden: false, edit: null };
+  const MEDIA = new Set(["image", "video"]);
+  const wfBy = (slug) => W.items.find((w) => w.slug === slug);
+  const wfSel = () => wfBy(W.sel);
+  function wfVals(wf) {
+    if (!W.vals[wf.slug]) {
+      const saved = store.get("wf:" + wf.slug, {});
+      const vals = {}, rand = {};
+      for (const f of wf.fields) {
+        if (MEDIA.has(f.type)) continue;
+        vals[f.key] = saved.vals && f.key in saved.vals ? saved.vals[f.key] : f.default;
+        if (f.type === "seed") rand[f.key] = saved.rand && f.key in saved.rand ? saved.rand[f.key] : true;
+      }
+      W.vals[wf.slug] = vals; W.rand[wf.slug] = rand;
+    }
+    return W.vals[wf.slug];
+  }
+  const wfRand = (wf) => (wfVals(wf), W.rand[wf.slug]);
+  const wfMedia = (wf) => (W.media[wf.slug] ||= {});
+  const saveWf = (wf) => store.set("wf:" + wf.slug, { vals: wfVals(wf), rand: wfRand(wf) });
+  function editorUrl() {
+    const c = S.cfg.comfy || {};
+    if (c.editor_url) return c.editor_url;
+    return c.editor_port ? `${location.protocol}//${location.hostname}:${c.editor_port}/` : "";
+  }
+
+  async function loadWorkflows() {
+    const res = await api("/api/workflows");
+    W.items = res.items;
+    W.comfy = res.comfy;
+    W.loaded = true;
+    if (!wfSel()) W.sel = (wfBy(store.get("wfSel")) || W.items[0] || {}).slug || null;
+  }
+  async function ensureWorkflows() {
+    if (!W.loaded) {
+      try { await loadWorkflows(); } catch (e) { toast(e.message, { type: "error" }); }
+    }
+    renderWorkflows();
+    startWfStatus();
+  }
+  function startWfStatus() { if (!W.statusTimer) W.statusTimer = setInterval(refreshWfStatus, 4000); }
+  function stopWfStatus() { clearInterval(W.statusTimer); W.statusTimer = null; }
+  async function refreshWfStatus() {
+    try { W.comfy = await api("/api/comfy/status"); } catch { return; }
+    renderWfStatus();
+  }
+  function renderWorkflows() {
+    const url = editorUrl();
+    const ed = $("#wfEditor");
+    ed.hidden = !url;
+    if (url) ed.href = url;
+    renderWfStatus();
+    renderWfList();
+    renderWfPanel();
+  }
+
+  function renderWfStatus() {
+    const c = W.comfy || {};
+    const gb = (b) => (b / 1e9).toFixed(0);
+    const box = $("#wfStatus");
+    const qwen = c.qwen_moving ? "Moving Qwen…" : c.qwen_on_gpu ? "Qwen is on the GPU" : "Qwen is parked in RAM";
+    const parkBtn = h("button", {
+      class: "btn btn-ghost btn-sm", type: "button", disabled: c.qwen_moving || null,
+      title: c.qwen_on_gpu ? "Move Qwen to RAM so workflows started in the ComfyUI editor get the whole GPU" : "Load Qwen back now instead of on the next render",
+      onclick: async () => {
+        try { W.comfy = await api("/api/comfy/park", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: c.qwen_on_gpu ? "park" : "unpark" }) }); }
+        catch (e) { toast(e.message, { type: "error" }); }
+        renderWfStatus();
+        setTimeout(refreshWfStatus, 1500);
+      },
+    }, icon(c.qwen_on_gpu ? "cpu" : "arrow-counter-clockwise"), c.qwen_on_gpu ? "Free GPU for the editor" : "Load Qwen back");
+    const keep = h("button", {
+      class: "toggle", type: "button", "aria-pressed": String(!!c.keep_loaded),
+      title: "Faster back-to-back videos. Qwen stays parked until you render an image.",
+      onclick: async () => {
+        try { W.comfy = await api("/api/comfy/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keep_loaded: !c.keep_loaded }) }); }
+        catch (e) { toast(e.message, { type: "error" }); }
+        renderWfStatus();
+      },
+    }, icon("stack"), h("span", {}, "Keep video models loaded"));
+    box.replaceChildren(
+      h("span", { class: `wf-dot${c.up ? " up" : ""}` }),
+      h("span", { class: "wf-stat" }, c.up ? `ComfyUI ${c.version || ""}` : "ComfyUI is not running"),
+      c.up && c.vram_total ? h("span", { class: "wf-stat dim" }, `${gb(c.vram_free)} of ${gb(c.vram_total)} GB VRAM free`) : null,
+      c.up && (c.running || c.pending) ? h("span", { class: "wf-stat dim" }, `${c.running + c.pending} in ComfyUI queue`) : null,
+      h("span", { class: "wf-stat dim" }, qwen),
+      h("span", { class: "wf-status-actions" }, keep, parkBtn),
+    );
+  }
+
+  function renderWfList() {
+    const list = $("#wfList");
+    if (!W.items.length) {
+      list.replaceChildren(h("p", { class: "hint" }, W.loaded ? "No workflows yet. Import one." : "Loading…"));
+      return;
+    }
+    list.replaceChildren(...W.items.map((wf, i) => h("button", {
+      class: "wf-item", type: "button", style: `--i:${i}`, "aria-current": String(wf.slug === W.sel),
+      onclick: () => { W.sel = wf.slug; store.set("wfSel", wf.slug); W.showHidden = false; renderWfList(); renderWfPanel(); },
+    },
+    h("span", { class: "wf-item-icon" }, icon(wf.output === "video" ? "film-strip" : "image")),
+    h("span", { class: "wf-item-t" }, h("strong", {}, wf.name), h("small", {}, wf.description || (wf.preset ? "Preset" : "Imported workflow"))),
+    wf.preset ? null : h("span", { class: "badge" }, "Yours"))));
+  }
+
+  function wfField(wf, f) {
+    const vals = wfVals(wf);
+    const set = (v) => { vals[f.key] = v; saveWf(wf); };
+    const help = f.help ? h("p", { class: "hint" }, f.help) : null;
+    const id = `wf_${wf.slug}_${f.key}`;
+    if (f.type === "text") {
+      const ta = h("textarea", { class: "input wf-text", id, rows: f.key === "prompt" ? 4 : 3, spellcheck: "true", maxlength: "8000" });
+      ta.value = vals[f.key] ?? "";
+      ta.addEventListener("input", () => set(ta.value));
+      return h("div", { class: "field wf-wide" }, h("label", { class: "field-label", for: id }, h("span", {}, f.label)), ta, help);
+    }
+    if (MEDIA.has(f.type)) return wfMediaField(wf, f, help);
+    if (f.type === "bool") {
+      const t = h("button", { class: "toggle", type: "button", "aria-pressed": String(!!vals[f.key]),
+        onclick: () => { set(!vals[f.key]); t.setAttribute("aria-pressed", String(!!vals[f.key])); } }, h("span", {}, vals[f.key] ? "On" : "Off"));
+      t.addEventListener("click", () => { t.lastChild.textContent = vals[f.key] ? "On" : "Off"; });
+      return h("div", { class: "field" }, h("div", { class: "field-label" }, h("span", {}, f.label), t), help);
+    }
+    const input = h("input", { class: "input mono", id, type: "number", inputmode: f.type === "float" ? "decimal" : "numeric",
+      min: f.min ?? null, max: f.max ?? null, step: f.step ?? (f.type === "float" ? "any" : 1) });
+    input.value = vals[f.key] ?? "";
+    input.addEventListener("change", () => {
+      const n = f.type === "float" ? parseFloat(input.value) : parseInt(input.value, 10);
+      if (Number.isFinite(n)) set(n); else input.value = vals[f.key] ?? "";
+      if (f.type === "seed") { wfRand(wf)[f.key] = false; saveWf(wf); renderWfPanel(); }
+    });
+    if (f.type === "seed") {
+      const rand = wfRand(wf);
+      const lock = h("button", { class: "toggle", type: "button", "aria-pressed": String(!rand[f.key]),
+        onclick: () => { rand[f.key] = !rand[f.key]; saveWf(wf); renderWfPanel(); } },
+      icon(rand[f.key] ? "dice-five" : "lock-simple"), h("span", {}, rand[f.key] ? "Random" : "Fixed"));
+      input.disabled = rand[f.key];
+      if (rand[f.key]) input.value = "";
+      input.placeholder = "Random each run";
+      return h("div", { class: "field" }, h("div", { class: "field-label" }, h("label", { for: id }, f.label), lock), input, help);
+    }
+    return h("div", { class: "field" }, h("label", { class: "field-label", for: id }, h("span", {}, f.label)), input, help);
+  }
+
+  function wfMediaField(wf, f, help) {
+    const media = wfMedia(wf);
+    const m = media[f.key];
+    const video = f.type === "video";
+    const accept = video ? "video/*,.mkv,.mov" : "image/*";
+    const picker = h("input", { type: "file", accept, hidden: true });
+    picker.addEventListener("change", () => { if (picker.files[0]) setWfFile(wf, f, picker.files[0]); picker.value = ""; });
+    let slot;
+    if (m) {
+      const preview = m.video
+        ? h("video", { src: m.url, muted: true, loop: true, autoplay: true, playsinline: true, poster: m.poster || null })
+        : h("img", { src: m.url, alt: f.label });
+      if (m.video) preview.muted = true;
+      slot = h("div", { class: `wf-slot filled${video ? " video" : ""}`, title: m.name || f.label },
+        preview,
+        h("span", { class: "wf-slot-name" }, m.library ? icon("squares-four") : icon(video ? "video" : "image"), m.name || ""),
+        h("button", { class: "remove", type: "button", "aria-label": `Remove ${f.label.toLowerCase()}`, onclick: () => { clearWfMedia(wf, f.key); renderWfPanel(); } }, icon("x")));
+    } else {
+      slot = h("div", { class: `wf-slot empty${video ? " video" : ""}` },
+        h("button", { type: "button", class: "wf-slot-pick", onclick: () => picker.click() }, icon(video ? "video" : "image"), h("span", {}, `Add ${f.label.toLowerCase()}`)),
+        h("button", { type: "button", class: "link-sm", onclick: () => openPicker(f.type, (rec) => setWfLibrary(wf, f, rec)) }, icon("squares-four"), "From Library"));
+    }
+    slot.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); slot.classList.add("over"); hideDrop(); });
+    slot.addEventListener("dragleave", () => slot.classList.remove("over"));
+    slot.addEventListener("drop", (e) => {
+      e.preventDefault(); e.stopPropagation(); slot.classList.remove("over"); hideDrop();
+      const file = [...(e.dataTransfer.files || [])].find((x) => x.type.startsWith(video ? "video/" : "image/") || (video && /\.(mkv|mov|webm|mp4|gif)$/i.test(x.name)));
+      if (file) setWfFile(wf, f, file); else toast(video ? "That file is not a video." : "That file is not an image.", { type: "error" });
+    });
+    return h("div", { class: "field wf-media-field" }, h("div", { class: "field-label" }, h("span", {}, f.label)), slot, picker, help);
+  }
+
+  function clearWfMedia(wf, key) {
+    const m = wfMedia(wf)[key];
+    if (m && m.blob) URL.revokeObjectURL(m.url);
+    delete wfMedia(wf)[key];
+  }
+  async function setWfFile(wf, f, file) {
+    clearWfMedia(wf, f.key);
+    const m = { blob: file, url: URL.createObjectURL(file), name: file.name || (f.type === "video" ? "video.mp4" : "image.png"), video: f.type === "video" };
+    wfMedia(wf)[f.key] = m;
+    renderWfPanel();
+    if (!m.video) {
+      try { const bmp = await createImageBitmap(file); fitWfSize(wf, f.key, bmp.width, bmp.height); bmp.close(); } catch { /* size stays */ }
+    }
+  }
+  function setWfLibrary(wf, f, rec) {
+    clearWfMedia(wf, f.key);
+    wfMedia(wf)[f.key] = { library: rec.file, url: isVideo(rec) ? rec.url : rec.thumb, poster: rec.thumb, name: rec.file, video: isVideo(rec) };
+    renderWfPanel();
+    if (!isVideo(rec)) fitWfSize(wf, f.key, rec.width, rec.height);
+  }
+  // Match the output size to the start image's shape, keeping roughly the same pixel count
+  function fitWfSize(wf, key, iw, ih) {
+    const sz = wf.size;
+    if (!sz || sz.from !== key || !iw || !ih) return;
+    const vals = wfVals(wf);
+    const fw = wf.fields.find((x) => x.key === sz.width), fh = wf.fields.find((x) => x.key === sz.height);
+    if (!fw || !fh) return;
+    const m = sz.multiple || 16;
+    const area = (vals[fw.key] || fw.default) * (vals[fh.key] || fh.default);
+    const ar = iw / ih;
+    const fit = (v, f) => clamp(Math.round(v / m) * m, f.min ?? m, f.max ?? 4096);
+    const w = fit(Math.sqrt(area * ar), fw), hh = fit(Math.sqrt(area / ar), fh);
+    if (w === vals[fw.key] && hh === vals[fh.key]) return;
+    vals[fw.key] = w; vals[fh.key] = hh;
+    saveWf(wf);
+    renderWfPanel();
+    toast(`Size set to ${w} × ${hh} to match the image.`);
+  }
+
+  function renderWfPanel() {
+    const panel = $("#wfPanel");
+    const wf = wfSel();
+    if (!wf) { panel.replaceChildren(); return; }
+    const hidden = wf.fields.filter((f) => f.hidden);
+    const shown = wf.fields.filter((f) => !f.hidden || W.showHidden);
+    const texts = shown.filter((f) => f.type === "text");
+    const medias = shown.filter((f) => MEDIA.has(f.type));
+    const rest = shown.filter((f) => f.type !== "text" && !MEDIA.has(f.type));
+    const del = wf.preset ? null : h("button", {
+      class: "icon-btn", type: "button", "aria-label": "Delete workflow", title: "Delete workflow",
+      onclick: async (e) => {
+        const b = e.currentTarget;
+        if (!b.classList.contains("confirm")) { b.classList.add("confirm"); b.title = "Click again to delete"; setTimeout(() => b.classList.remove("confirm"), 3000); return; }
+        try { await api(`/api/workflows/${wf.slug}`, { method: "DELETE" }); await loadWorkflows(); renderWorkflows(); toast("Workflow deleted.", { type: "ok" }); }
+        catch (err) { toast(err.message, { type: "error" }); }
+      },
+    }, icon("trash"));
+    const run = h("button", { class: "btn btn-primary wf-run", type: "button", onclick: () => runWorkflow(wf) }, icon("play", true), h("span", {}, "Run"));
+    panel.replaceChildren(
+      h("header", { class: "wf-panel-head" },
+        h("div", {}, h("h2", {}, wf.name), wf.description ? h("p", { class: "sub" }, wf.description) : null),
+        h("div", { class: "wf-panel-tools" },
+          h("button", { class: "icon-btn", type: "button", "aria-label": "Edit fields", title: "Edit fields", onclick: () => openFieldEditor(wf) }, icon("faders")),
+          del)),
+      ...texts.map((f) => wfField(wf, f)),
+      medias.length ? h("div", { class: "wf-media" }, ...medias.map((f) => wfField(wf, f))) : null,
+      rest.length ? h("div", { class: "wf-grid" }, ...rest.map((f) => wfField(wf, f))) : null,
+      hidden.length ? h("button", { class: "link-sm wf-more", type: "button", onclick: () => { W.showHidden = !W.showHidden; renderWfPanel(); } },
+        icon(W.showHidden ? "eye-slash" : "eye"), W.showHidden ? "Hide advanced fields" : `Show ${hidden.length} advanced field${hidden.length === 1 ? "" : "s"}`) : null,
+      h("div", { class: "wf-run-row" }, run,
+        h("span", { class: "hint" }, wf.output === "video" ? "Qwen moves to RAM while the video renders, and comes back on your next image." : "Runs in ComfyUI. Results land in the Library.")),
+      h("div", { class: "wf-runs", id: "wfRuns" }),
+    );
+    renderWfRuns();
+  }
+
+  function renderWfRuns() {
+    const box = $("#wfRuns");
+    if (!box) return;
+    const runs = activeJobs().filter((j) => j.kind === "comfy").sort((a, b) => a.created - b.created);
+    box.replaceChildren(...runs.map((job) => {
+      const p = job.steps ? job.step / job.steps : 0;
+      let eta = "";
+      if (job.status === "queued") eta = job.ahead ? `${job.ahead} ahead` : "Up next";
+      else if (job.step >= 2 && job.first_step_at && job.step < job.steps) eta = `About ${fmtSecs(((job.server_time - job.first_step_at) / (job.step - 1)) * (job.steps - job.step))} left`;
+      else if (job.started) eta = `${fmtSecs(job.server_time - job.started)} elapsed`;
+      return h("div", { class: "wf-run-item" },
+        h("span", { class: "queue-ring" }),
+        h("div", { class: "wf-run-t" },
+          h("strong", {}, job.workflow || "Workflow"),
+          h("small", {}, job.status === "queued" ? "Queued" : job.phase, job.step ? `  ${job.step}/${job.steps}` : ""),
+          h("div", { class: "develop-bar", style: `--p:${p}` }, h("span"))),
+        h("span", { class: "wf-run-eta" }, eta),
+        h("button", { class: "icon-btn", type: "button", "aria-label": "Cancel", title: "Cancel", onclick: () => cancelJob(job.id) }, icon("x")));
+    }));
+  }
+
+  async function runWorkflow(wf) {
+    const vals = wfVals(wf), media = wfMedia(wf);
+    const fd = new FormData();
+    const library = {}, values = {};
+    for (const f of wf.fields) {
+      if (MEDIA.has(f.type)) {
+        const m = media[f.key];
+        if (m && m.blob) fd.append(`file_${f.key}`, m.blob, m.name);
+        else if (m && m.library) library[f.key] = m.library;
+        else if (!f.hidden && !f.default) return toast(`Add ${f.label.toLowerCase()} first.`, { type: "error" });
+      } else if (vals[f.key] != null && (vals[f.key] !== "" || f.type === "text")) values[f.key] = vals[f.key];
+    }
+    fd.append("params", JSON.stringify({ values, randomize: wfRand(wf), library }));
+    const btn = $(".wf-run");
+    if (btn) btn.disabled = true;
+    try {
+      const job = await api(`/api/workflows/${wf.slug}/run`, { method: "POST", body: fd });
+      S.jobs.set(job.id, job);
+      renderFeed();
+      startPolling();
+      renderWfRuns();
+      if (wf.output === "video" && wf.fields.some((f) => f.type === "image") && !wf.fields.some((f) => f.type === "video")) store.set("animateWf", wf.slug);
+      toast(`${wf.name} queued. It also shows in Create.`, { type: "ok" });
+    } catch (e) { toast(e.message, { type: "error", timeout: 8000 }); }
+    finally { setTimeout(() => { if (btn) btn.disabled = false; }, 400); }
+  }
+
+  // Files dropped or pasted anywhere on the Workflows page go to the first matching slot of the open workflow
+  function wfDropAnywhere(files) {
+    const wf = wfSel();
+    if (!wf) return;
+    let used = 0;
+    for (const file of files) {
+      const kind = file.type.startsWith("video/") || /\.(mkv|mov|webm|mp4)$/i.test(file.name) ? "video" : file.type.startsWith("image/") ? "image" : null;
+      const slots = wf.fields.filter((f) => f.type === kind);
+      const f = slots.find((x) => !wfMedia(wf)[x.key]) || slots[0];
+      if (f) { setWfFile(wf, f, file); used++; }
+    }
+    if (!used) toast(`${wf.name} has no slot for that file.`, { type: "error" });
+  }
+
+  async function animate(rec) {
+    closeLightbox();
+    try { if (!W.loaded) await loadWorkflows(); } catch (e) { return toast(e.message, { type: "error" }); }
+    const i2v = (w) => w && w.output === "video" && w.fields.some((f) => f.type === "image") && !w.fields.some((f) => f.type === "video");
+    const wf = [wfBy(store.get("animateWf")), wfBy("wan22-i2v"), ...W.items].find(i2v);
+    if (!wf) return toast("No image-to-video workflow is installed.", { type: "error" });
+    W.sel = wf.slug;
+    store.set("wfSel", wf.slug);
+    setWfLibrary(wf, wf.fields.find((f) => f.type === "image"), rec);
+    go("workflows");
+    toast("Image loaded. Describe the motion, then Run.", { type: "ok" });
+    setTimeout(() => { const t = $("#wfPanel textarea"); if (t) { t.focus(); t.select(); } }, 120);
+  }
+
+  async function reuseWorkflow(rec) {
+    try { if (!W.loaded) await loadWorkflows(); } catch (e) { return toast(e.message, { type: "error" }); }
+    const wf = wfBy(rec.workflow);
+    if (!wf) return toast("That workflow is no longer installed.", { type: "error" });
+    W.sel = wf.slug;
+    store.set("wfSel", wf.slug);
+    const vals = wfVals(wf), rand = wfRand(wf);
+    for (const [k, v] of Object.entries(rec.form || {})) if (wf.fields.some((f) => f.key === k)) vals[k] = v;
+    for (const f of wf.fields) if (f.type === "seed" && rec.form && f.key in rec.form) rand[f.key] = false;
+    saveWf(wf);
+    if (rec.source_image) {
+      const f = wf.fields.find((x) => x.type === "image");
+      const src = findRec(rec.source_image) || { file: rec.source_image, thumb: `/thumbs/${rec.source_image}`, url: `/outputs/${rec.source_image}` };
+      if (f) setWfLibrary(wf, f, src);
+    }
+    closeLightbox();
+    go("workflows");
+    toast("Workflow settings restored, seed fixed.", { type: "ok" });
+  }
+
+  // Library picker for image and video slots
+  async function openPicker(kind, onPick) {
+    const grid = $("#wfPickerGrid");
+    $("#wfPickerTitle").textContent = kind === "video" ? "Pick a video from the Library" : "Pick an image from the Library";
+    grid.replaceChildren(h("p", { class: "hint" }, "Loading…"));
+    $("#wfPicker").hidden = false;
+    let items;
+    try { items = (await api("/api/history?limit=200")).items.filter((r) => (kind === "video") === isVideo(r)); }
+    catch (e) { grid.replaceChildren(h("p", { class: "hint" }, e.message)); return; }
+    if (!items.length) { grid.replaceChildren(h("p", { class: "hint" }, kind === "video" ? "No videos in the Library yet." : "No images in the Library yet.")); return; }
+    grid.replaceChildren(...items.map((r) => h("button", { class: "wf-pick", type: "button", title: r.prompt || r.file,
+      onclick: () => { $("#wfPicker").hidden = true; onPick(r); } },
+    h("img", { src: r.thumb, alt: "", loading: "lazy" }), isVideo(r) ? videoBadge(r) : null)));
+  }
+
+  // Import
+  function openImport() {
+    $("#wfImportName").value = "";
+    $("#wfImportJson").value = "";
+    $("#wfImport").hidden = false;
+    $("#wfImportName").focus();
+  }
+  async function readImportFile(file) {
+    if (!file) return;
+    $("#wfImportJson").value = await file.text();
+    if (!$("#wfImportName").value.trim()) $("#wfImportName").value = file.name.replace(/\.json$/i, "").replace(/[_-]+/g, " ").trim();
+  }
+  async function submitImport() {
+    try {
+      const wf = await api("/api/workflows", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: $("#wfImportName").value.trim(), graph: $("#wfImportJson").value }) });
+      $("#wfImport").hidden = true;
+      await loadWorkflows();
+      W.sel = wf.slug;
+      store.set("wfSel", wf.slug);
+      renderWorkflows();
+      toast(`Imported with ${wf.fields.length} field${wf.fields.length === 1 ? "" : "s"}. Adjust them in Edit fields if needed.`, { type: "ok", timeout: 6000 });
+    } catch (e) { toast(e.message, { type: "error", timeout: 8000 }); }
+  }
+
+  // Field editor: rename, hide, retype or remove fields, and expose more node inputs
+  const isLink = (v) => Array.isArray(v) && v.length === 2 && typeof v[0] === "string";
+  async function openFieldEditor(wf) {
+    let graph;
+    try { graph = await api(`/api/workflows/${wf.slug}/graph`); } catch (e) { return toast(e.message, { type: "error" }); }
+    W.edit = { wf, graph, fields: JSON.parse(JSON.stringify(wf.fields)) };
+    $("#wfFieldsName").value = wf.name;
+    const ids = Object.keys(graph).sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
+    $("#wfAddNode").replaceChildren(...ids.map((id) => h("option", { value: id }, `${id} · ${(graph[id]._meta || {}).title || graph[id].class_type}`)));
+    fillAddInputs();
+    renderFieldRows();
+    $("#wfFields").hidden = false;
+  }
+  function fillAddInputs() {
+    const node = W.edit.graph[$("#wfAddNode").value];
+    const names = node ? Object.keys(node.inputs).filter((k) => !isLink(node.inputs[k])) : [];
+    $("#wfAddInput").replaceChildren(...(names.length ? names.map((k) => h("option", { value: k }, k)) : [h("option", { value: "" }, "No editable inputs")]));
+  }
+  function guessType(node, name) {
+    const v = node.inputs[name];
+    if (node.class_type === "LoadImage" && name === "image") return "image";
+    if (/LoadVideo/.test(node.class_type)) return "video";
+    if (typeof v === "boolean") return "bool";
+    if (typeof v === "number") return /seed/.test(name) ? "seed" : Number.isInteger(v) ? "int" : "float";
+    return "text";
+  }
+  function renderFieldRows() {
+    const { graph, fields } = W.edit;
+    const describe = (f) => f.targets.map((t) => `${t[0]} · ${(graph[t[0]] && ((graph[t[0]]._meta || {}).title || graph[t[0]].class_type)) || "missing"} · ${t[1]}${t[2] ? ` (${t[2]})` : ""}`).join("\n");
+    $("#wfFieldRows").replaceChildren(...fields.map((f, i) => {
+      const label = h("input", { class: "input", value: f.label, "aria-label": "Label", maxlength: "60" });
+      label.addEventListener("input", () => { f.label = label.value; });
+      const type = h("select", { class: "input", "aria-label": "Type" }, ...["text", "int", "float", "seed", "bool", "image", "video"].map((t) => h("option", { value: t, selected: t === f.type || null }, t)));
+      type.addEventListener("change", () => { f.type = type.value; });
+      const move = (d) => { const j = i + d; if (j < 0 || j >= fields.length) return; [fields[i], fields[j]] = [fields[j], fields[i]]; renderFieldRows(); };
+      return h("div", { class: `wf-frow${f.hidden ? " is-hidden" : ""}` },
+        h("div", { class: "wf-frow-main" }, label, type),
+        h("div", { class: "wf-frow-target mono", title: describe(f) }, describe(f).split("\n")[0], f.targets.length > 1 ? ` +${f.targets.length - 1}` : ""),
+        h("div", { class: "wf-frow-tools" },
+          h("button", { class: "icon-btn", type: "button", "aria-label": "Move up", title: "Move up", onclick: () => move(-1) }, icon("arrow-up")),
+          h("button", { class: "icon-btn", type: "button", "aria-label": "Move down", title: "Move down", onclick: () => move(1) }, icon("arrow-down")),
+          h("button", { class: "icon-btn", type: "button", "aria-pressed": String(!!f.hidden), "aria-label": f.hidden ? "Show in form" : "Hide (advanced)", title: f.hidden ? "Hidden under advanced. Click to show." : "Shown. Click to hide under advanced.",
+            onclick: () => { f.hidden = !f.hidden; renderFieldRows(); } }, icon(f.hidden ? "eye-slash" : "eye")),
+          h("button", { class: "icon-btn", type: "button", "aria-label": "Remove field", title: "Remove field", onclick: () => { fields.splice(i, 1); renderFieldRows(); } }, icon("trash"))));
+    }));
+  }
+  function addField() {
+    const { graph, fields } = W.edit;
+    const id = $("#wfAddNode").value, name = $("#wfAddInput").value;
+    if (!id || !name) return;
+    const node = graph[id];
+    const type = guessType(node, name);
+    let key = `${name}_${id}`.replace(/\W/g, "_");
+    while (fields.some((f) => f.key === key)) key += "_";
+    fields.push({ key, label: name.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()), type, default: MEDIA.has(type) ? "" : node.inputs[name], targets: [[id, name]], hidden: false });
+    renderFieldRows();
+    $("#wfFieldRows").lastChild?.scrollIntoView({ block: "nearest" });
+  }
+  async function saveFields() {
+    const { wf, fields } = W.edit;
+    try {
+      const out = await api(`/api/workflows/${wf.slug}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: $("#wfFieldsName").value.trim(), fields }) });
+      $("#wfFields").hidden = true;
+      delete W.vals[wf.slug];
+      await loadWorkflows();
+      W.sel = out.slug;
+      renderWorkflows();
+      toast("Fields saved.", { type: "ok" });
+    } catch (e) { toast(e.message, { type: "error", timeout: 8000 }); }
+  }
+
+  function wireWorkflows() {
+    $("#wfImportBtn").addEventListener("click", openImport);
+    $("#wfImportForm").addEventListener("submit", (e) => { e.preventDefault(); submitImport(); });
+    $("#wfImportFile").addEventListener("change", (e) => { readImportFile(e.target.files[0]); e.target.value = ""; });
+    const imp = $("#wfImport");
+    imp.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); });
+    imp.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); hideDrop(); readImportFile((e.dataTransfer.files || [])[0]); });
+    $("#wfAddNode").addEventListener("change", fillAddInputs);
+    $("#wfAddBtn").addEventListener("click", addField);
+    $("#wfFieldsSave").addEventListener("click", saveFields);
+    for (const id of ["#wfImport", "#wfFields", "#wfPicker"]) {
+      $(id).addEventListener("click", (e) => { if (e.target.id === id.slice(1) || e.target.closest("[data-close]")) $(id).hidden = true; });
+    }
+    $("#lbAnimate").addEventListener("click", () => animate(LB.list[LB.i]));
+    $("#lbVideo").addEventListener("volumechange", (e) => store.set("videoMuted", e.target.muted));
+  }
+
   // ---------------------------------------------------------------- drag, drop, paste
   let dragDepth = 0;
   const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
   function hideDrop() { dragDepth = 0; $("#dropzone").hidden = true; }
-  window.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; $("#dropzone").hidden = false; });
+  window.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth++;
+    const wf = $("#app").dataset.view === "workflows";
+    $("#dropzone strong").textContent = wf ? "Drop into the workflow" : "Drop to use as reference";
+    $("#dropzone span").textContent = wf ? "Images and videos fill the open workflow's slots." : "Obscura switches to Edit or Blend for you.";
+    $("#dropzone").hidden = false;
+  });
   window.addEventListener("dragleave", (e) => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) hideDrop(); });
   window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
   window.addEventListener("drop", (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault(); hideDrop();
+    if ($("#app").dataset.view === "workflows") return wfDropAnywhere([...e.dataTransfer.files]);
     addImages([...e.dataTransfer.files]);
   });
   window.addEventListener("paste", (e) => {
-    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
-    if (files.length) { e.preventDefault(); addImages(files); }
+    if (typing(document.activeElement) && !(e.clipboardData?.files || []).length) return;
+    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
+    if (!files.length) return;
+    e.preventDefault();
+    if ($("#app").dataset.view === "workflows") return wfDropAnywhere(files);
+    addImages(files.filter((f) => f.type.startsWith("image/")));
   });
 
   // ---------------------------------------------------------------- keyboard
@@ -1590,6 +2154,8 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (!$("#rewrite").hidden) return closeRewrite();
+      const modal = ["#wfPicker", "#wfFields", "#wfImport"].find((id) => !$(id).hidden);
+      if (modal) return ($(modal).hidden = true);
       if (!$("#shortcuts").hidden) return ($("#shortcuts").hidden = true);
       if (!$("#lightbox").hidden) return Z.s > 1.001 ? zoomReset(true) : closeLightbox();
       if ($("#inspector").classList.contains("open")) return closeInspector();
@@ -1597,8 +2163,10 @@
       if (typing(document.activeElement)) return document.activeElement.blur();
     }
     if (!$("#rewrite").hidden) return; // the popup handles its own keys
+    if (["#wfPicker", "#wfFields", "#wfImport"].some((id) => !$(id).hidden)) return;
     if (!$("#lightbox").hidden) {
       if (typing(document.activeElement)) return; // typing in the enhance prompt, not navigating
+      if (isVideo(LB.list[LB.i]) && e.key === " ") { e.preventDefault(); const v = $("#lbVideo"); v.paused ? v.play() : v.pause(); return; }
       if (e.key === "ArrowLeft") { e.preventDefault(); lbStep(-1); }
       if (e.key === "ArrowRight") { e.preventDefault(); lbStep(1); }
       if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomCenter(1.5); }
@@ -1609,6 +2177,7 @@
     if (typing(document.activeElement) || e.metaKey || e.ctrlKey || e.altKey) return;
     const view = $("#app").dataset.view;
     if (e.key === "/") { e.preventDefault(); (view === "library" ? $("#librarySearch") : view === "create" ? $("#prompt") : null)?.focus(); }
+    if (e.key === "5") go("workflows");
     if (e.key === "1") go("create");
     if (e.key === "2") go("library");
     if (e.key === "3") go("styles");
@@ -1672,6 +2241,7 @@
     wireZoom();
     wireSelection();
     wireRewrite();
+    wireWorkflows();
     $("#lbMore").addEventListener("click", () => {
       const open = $("#lbPrompt").classList.toggle("clamped") === false;
       $("#lbMore").classList.toggle("open", open);
@@ -1680,7 +2250,11 @@
     $("#lbCopy").addEventListener("click", async () => {
       copyPrompt(LB.list[LB.i].prompt);
     });
-    $("#lbReuse").addEventListener("click", () => { reuse(LB.list[LB.i]); closeLightbox(); go("create"); toast("Settings restored, seed fixed.", { type: "ok" }); });
+    $("#lbReuse").addEventListener("click", () => {
+      const rec = LB.list[LB.i];
+      if (isComfy(rec)) return reuseWorkflow(rec);
+      reuse(rec); closeLightbox(); go("create"); toast("Settings restored, seed fixed.", { type: "ok" });
+    });
     $("#lbEdit").addEventListener("click", () => editRecord(LB.list[LB.i]));
     $("#lbDelete").addEventListener("click", lbDelete);
     $$("#lbUpscale [data-up]").forEach((b) => b.addEventListener("click", () => upscale(LB.list[LB.i], b.dataset.up)));

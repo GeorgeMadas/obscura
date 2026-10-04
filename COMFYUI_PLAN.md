@@ -4,6 +4,14 @@
 then this plan, phase by phase. Each phase ends with a **Check**. Don't move on from a failing check.
 Written 2026-10-02.
 
+> **Status (2026-10-04): implemented, phases 0–8 done.** What changed from this plan while building it:
+> - Motion transfer uses **Wan Animate 2** (`Comfy-Org/Wan-Animate-2`), which ComfyUI's own templates now ship
+>   instead of Wan 2.2 Animate. It needs no pose-preprocessing nodes, so `ComfyUI-WanAnimatePreprocess` isn't installed.
+>   The preset renders one segment (default 81 frames) from the start of the driving video.
+> - ComfyUI got its own venv (`/venv/comfy`) from the start, so nodes installed through ComfyUI-Manager can't
+>   change Obscura's packages.
+> - Everything is installed by `deploy/install_comfyui.sh` (also run by `deploy/provision.sh`); see SETUP.md step 9.
+
 Ground rules (same as SETUP.md):
 - **Never trigger a render, upscale or ComfyUI workflow run to test anything.** The user does all
   testing. Verify with syncing, `py_compile`, `node --check`, port/log checks, and read-only

@@ -15,6 +15,10 @@ Snapshot of the reference instance this guide reproduces (2026-10-01):
 | Service | supervisor program `qwen-image`, portal name `Qwen Image` |
 | External port | `10100` → internal `17860`, behind Caddy token auth |
 | Models | `$HF_HOME` = `/workspace/.hf_home` (~75 GB, list in step 5) |
+| ComfyUI | `/workspace/ComfyUI`, venv `/venv/comfy`, service `comfyui` on `127.0.0.1:18188`, portal `ComfyUI` `10200` → `18188` (step 9) |
+| Video models | `/workspace/ComfyUI/models` (~68 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan Animate 2) |
+| Disk | **≥ 250 GB** (Qwen ~75 GB + video models ~68 GB + two venvs ~20 GB + outputs) |
+| Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor) |
 | Claude extras | `~/.claude/settings.json`, 13 skills, 2 memories (step 7) |
 
 Ground rules while doing this:
@@ -207,11 +211,47 @@ instance) and telling them it's ready to test.
 
 ---
 
+## 9. ComfyUI (video workflows)
+
+Obscura's **Workflows** tab runs ComfyUI graphs: the built-in video presets (Image → Video 14B, its 4-step
+fast version, Motion transfer with Wan Animate 2, and the 5B draft model) plus any workflow the user imports.
+`deploy/provision.sh` does this step automatically on new instances; by hand it is one script:
+
+```bash
+bash /workspace/qwen-image/deploy/install_comfyui.sh   # idempotent; ~68 GB of models
+```
+
+What it sets up:
+- `/workspace/ComfyUI` at a pinned commit, with ComfyUI-Manager, ComfyUI-VideoHelperSuite and ComfyUI-KJNodes
+  (commits pinned in the script).
+- **Its own venv `/venv/comfy`** with the same `torch 2.11.0+cu128` as `/venv/main`. ComfyUI-Manager installs
+  whatever a node asks for; in its own venv that can't break Obscura's pinned `transformers`/`diffusers`.
+- Service `comfyui` (`deploy/service/comfyui.sh` + `.conf`), listening on `127.0.0.1:18188`, and the portal
+  entry `ComfyUI`: external `10200` → `18188` behind Caddy token auth.
+- Models from `deploy/prefetch_comfy.py` into `/workspace/ComfyUI/models/{diffusion_models,loras,text_encoders,vae,clip_vision}`.
+- Presets live in `workflows/` (API graph + `.meta.json` form). Regenerate them with
+  `python deploy/build_presets.py`; workflows the user imports are saved there too and synced through git.
+
+How the GPU is shared: Qwen keeps ~60–88 GB of VRAM while idle, so a ComfyUI job first moves Qwen (and the
+prompt rewriter) to CPU RAM, runs, then asks ComfyUI to free its VRAM (`POST /free`). The next image render
+moves Qwen back, which takes several seconds ("Loading Qwen back to GPU"). Jobs share Obscura's single queue, so
+a video never overlaps a render. Runs started in the ComfyUI **editor** don't go through that queue: use
+**Free GPU for the editor** on the Workflows tab first.
+
+**Check** (never run a workflow to test):
+```bash
+supervisorctl status comfyui                                   # RUNNING
+curl -s 127.0.0.1:18188/system_stats | head -c 200             # JSON
+curl -s 127.0.0.1:17860/api/workflows | python3 -c "import json,sys; print([w['slug'] for w in json.load(sys.stdin)['items']])"
+vast-capabilities | jq '.services[] | select(.name=="ComfyUI") | .direct_url'
+```
+
 ## Keeping instances in sync
 
 Both instances are clones of `GeorgeMadas/obscura`. After changing app code: commit, `git push`;
 on the other instance `git pull` then `supervisorctl restart qwen-image`. If `deploy/requirements.txt`
-changed, rerun step 3 before restarting. Never commit `outputs/` or `history.jsonl` (gitignored).
+changed, rerun step 3 before restarting. If ComfyUI files changed (`deploy/install_comfyui.sh`,
+`deploy/service/comfyui.*`, `deploy/prefetch_comfy.py`), rerun step 9. Never commit `outputs/` or `history.jsonl` (gitignored).
 
 ## Troubleshooting
 
@@ -223,4 +263,9 @@ changed, rerun step 3 before restarting. Never commit `outputs/` or `history.jso
 | `Checksum verification failed` | Corrupt GGUF download → delete that blob under `$HF_HOME/hub/models--KasugaiSakura--*/blobs/` and rerun prefetch |
 | Rewrite popup says the GPU ran out of memory | A 4MP render + the ~20 GB rewriter didn't fit at once → wait for the render, or turn the rewrite toggle (wand icon) off |
 | CUDA OOM at load | GPU < ~48 GB → user switches to "Small" in the UI (writes `settings.json`) |
+| Workflows tab says "ComfyUI isn't running" | `supervisorctl start comfyui`; log in `/var/log/portal/comfyui.log` |
+| ComfyUI service skipped at start | Portal entry name isn't exactly `ComfyUI` → rerun `deploy/install_comfyui.sh` |
+| A video job fails with out of memory | A run from the ComfyUI editor or the prompt rewriter was holding VRAM → click **Free GPU for the editor**, wait, retry |
+| "Not enough free GPU memory to bring Qwen back" | ComfyUI still holds models (e.g. **Keep video models loaded** is on, or an editor run) → turn it off / wait, then render again |
+| Imported workflow rejected as "editor format" | In ComfyUI use **Workflow → Export (API)**, not the normal save |
 | `git push` asks for a password | Step 2 credentials missing or token revoked — ask the user for a new token, update `deploy/github.env` |

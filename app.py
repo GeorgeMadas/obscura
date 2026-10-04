@@ -20,7 +20,7 @@ import numpy as np
 import torch
 import spandrel
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,6 +33,7 @@ from huggingface_hub import constants as hf_constants, hf_hub_download
 from PIL import Image, ImageOps
 from safetensors.torch import load_file as safetensors_load_file
 
+import comfy_bridge
 import prompt_rewriter
 
 # Model Configuration
@@ -243,6 +244,58 @@ pipe = QwenImage21Pipeline.from_pretrained(
     torch_dtype=torch.bfloat16,
 ).to("cuda")
 print(f"{MODEL_ID} successfully initialized on CUDA for ZeroGPU.", flush=True)
+
+
+# ============================================================
+# Sharing the GPU with ComfyUI: Qwen waits in CPU RAM while a ComfyUI job runs
+# ============================================================
+QWEN = {"on_gpu": True, "moving": False}
+QWEN_BYTES = sum(t.numel() * t.element_size() for m in (pipe.transformer, pipe.text_encoder, pipe.vae)
+                 for t in [*m.parameters(), *m.buffers()])
+UNPARK_MARGIN = 6e9
+
+
+def park_qwen(job: dict | None = None):
+    """Move Qwen (and the prompt rewriter) to CPU RAM so ComfyUI gets the VRAM. Call with GPU_LOCK held."""
+    if QWEN["on_gpu"]:
+        if job:
+            job["phase"] = "Moving Qwen off the GPU"
+        pipe.to("cpu")
+        QWEN["on_gpu"] = False
+    prompt_rewriter.park()
+    torch.cuda.empty_cache()
+
+
+def unpark_qwen(job: dict | None = None):
+    """Bring Qwen back to the GPU before anything uses the pipe. Call with GPU_LOCK held.
+
+    ComfyUI is asked to drop its models first; it does that between prompts, so this waits for the VRAM
+    (longer while ComfyUI is still busy with a run started from its editor)."""
+    if QWEN["on_gpu"]:
+        return
+    comfy_bridge.free()
+    deadline = time.time() + 90
+    while torch.cuda.mem_get_info()[0] < QWEN_BYTES + UNPARK_MARGIN:
+        if job and job["cancel"]:
+            raise Cancelled()
+        if comfy_bridge.busy():
+            if job:
+                job["phase"] = "Waiting for ComfyUI to finish"
+            deadline = time.time() + 90
+        elif time.time() > deadline:
+            break  # try anyway; an OOM below is reported clearly
+        elif job:
+            job["phase"] = "Waiting for ComfyUI to free the GPU"
+        time.sleep(0.5)
+    if job:
+        job["phase"] = "Loading Qwen back to GPU"
+    try:
+        pipe.to("cuda")
+    except torch.cuda.OutOfMemoryError:
+        pipe.to("cpu")
+        torch.cuda.empty_cache()
+        raise UserError("Not enough free GPU memory to bring Qwen back. Something else (ComfyUI?) is still using the GPU.")
+    QWEN["on_gpu"] = True
 
 
 # ============================================================
@@ -462,11 +515,19 @@ LORA_SHORT_NAMES = {
     "Viggle Turbo (4-Step Acceleration)": "Viggle Turbo",
 }
 
-SAFE_NAME = re.compile(r"^[\w\-.]+\.png$")
+SAFE_NAME = re.compile(r"^[\w\-.]+\.(png|mp4|webm)$")
+VIDEO_SUFFIXES = (".mp4", ".webm")
+MEDIA_TYPES = {".png": "image/png", ".mp4": "video/mp4", ".webm": "video/webm"}
+
+
 THUMB_DIR = OUTPUT_DIR / ".thumbs"
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 HISTORY_LOCK = threading.Lock()
+
+
+def _is_video(name: str) -> bool:
+    return name.endswith(VIDEO_SUFFIXES)
 
 # ============================================================
 # Upscalers (4x ESRGAN family, run through spandrel)
@@ -910,6 +971,88 @@ def run_generation(job: dict) -> dict:
 
 
 # ============================================================
+# ComfyUI workflows
+# ============================================================
+def _save_comfy_output(item: dict, req: dict, elapsed: float, index: int) -> dict:
+    """Copy one ComfyUI output into OUTPUT_DIR (browser-playable, pixels only) and log it in the history."""
+    ext = Path(item["filename"]).suffix.lower()
+    stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000:03d}"
+    base = f"{stamp}_{req.get('seed') if req.get('seed') is not None else 'wf'}_{req['slug']}" + (f"-{index + 1}" if index else "")
+    tmp = OUTPUT_DIR / f".incoming-{uuid.uuid4().hex}.part"
+    comfy_bridge.download(item, tmp)
+    info = {}
+    try:
+        if ext in comfy_bridge.VIDEO_EXTS:
+            info = comfy_bridge.probe(tmp)
+            if ext in VIDEO_SUFFIXES and info.get("codec") in comfy_bridge.BROWSER_CODECS:
+                name = base + ext
+                tmp.replace(OUTPUT_DIR / name)
+            else:
+                name = base + ".mp4"
+                comfy_bridge.to_browser_mp4(tmp, OUTPUT_DIR / name)
+                info = comfy_bridge.probe(OUTPUT_DIR / name)
+            media, width, height = "video", info.get("width"), info.get("height")
+        else:
+            with Image.open(tmp) as im:
+                im.load()
+                img = im if im.mode in ("RGB", "RGBA", "L", "LA") else im.convert("RGBA")
+                name = base + ".png"
+                # Pixels only, like renders
+                Image.frombytes(img.mode, img.size, img.tobytes()).save(OUTPUT_DIR / name, "PNG", optimize=True)
+                media, (width, height) = "image", img.size
+    finally:
+        tmp.unlink(missing_ok=True)
+    record = {
+        "file": name,
+        "kind": "comfy",
+        "media": media,
+        "workflow": req["slug"],
+        "workflow_name": req["name"],
+        "prompt": req.get("prompt", ""),
+        "mode": "Workflow",
+        "seed": req.get("seed"),
+        "steps": req.get("steps_value"),
+        "dimensions": f"{width}x{height}",
+        "elapsed_seconds": round(elapsed, 2),
+        **({k: info[k] for k in ("fps", "frames", "duration") if info.get(k)}),
+        "values": req.get("display", []),
+        "form": req.get("values", {}),
+        **({"source_image": req["source"]} if req.get("source") else {}),
+        "created": time.time(),
+    }
+    with HISTORY_LOCK, open(HISTORY_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return _public_record(record)
+
+
+def run_comfy(job: dict) -> dict:
+    req = job["request"]
+    park_qwen(job)
+    if job["cancel"]:
+        raise Cancelled()
+    job["phase"] = "Sending inputs to ComfyUI"
+    media = {key: comfy_bridge.upload(data, filename) for key, (filename, data) in req["media"].items()}
+    graph = comfy_bridge.patch(req["graph"], req["meta"], req["values"], media)
+    start = time.perf_counter()
+    try:
+        hist = comfy_bridge.execute(graph, job, lambda: job["cancel"])
+    except comfy_bridge.Interrupted:
+        raise Cancelled()
+    finally:
+        # Hand the VRAM back unless the person wants ComfyUI's models kept loaded between runs
+        if not _read_settings().get("comfy_keep_loaded"):
+            comfy_bridge.free()
+    elapsed = time.perf_counter() - start
+    files = comfy_bridge.output_files(hist)
+    if not files:
+        raise UserError("The workflow finished but saved nothing. Add a Save Image or Save Video node.")
+    job["phase"] = "Saving"
+    records = [_save_comfy_output(item, req, elapsed, i) for i, item in enumerate(files)]
+    job["results"] = records
+    return records[0]
+
+
+# ============================================================
 # Job queue: one GPU, one worker, any number of queued requests
 # ============================================================
 JOBS: dict[str, dict] = {}
@@ -939,7 +1082,10 @@ def _job_view(job: dict) -> dict:
         "aspect": job["request"].get("aspect"),
         "upscaler": job["request"].get("upscaler"),
         "strength": job["request"].get("strength"),
+        "workflow": job["request"].get("name"),
+        "media": job["request"].get("output"),
         "result": job.get("result"),
+        "results": job.get("results"),
         "error": job.get("error"),
     }
 
@@ -957,12 +1103,17 @@ def _worker():
                 time.sleep(0.5)
             with GPU_LOCK:
                 kind = job["request"].get("kind")
-                job["result"] = (run_upscale(job) if kind == "upscale"
-                                 else run_enhance(job) if kind == "enhance" else run_generation(job))
+                if kind == "comfy":
+                    job["result"] = run_comfy(job)
+                else:
+                    if kind != "upscale":
+                        unpark_qwen(job)
+                    job["result"] = (run_upscale(job) if kind == "upscale"
+                                     else run_enhance(job) if kind == "enhance" else run_generation(job))
             job["status"] = "done"
         except Cancelled:
             job["status"] = "cancelled"
-        except UserError as e:
+        except (UserError, comfy_bridge.BridgeError) as e:
             job.update(status="error", error=str(e))
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
@@ -971,8 +1122,9 @@ def _worker():
             traceback.print_exc()
             job.update(status="error", error=f"Generation failed: {e}")
         finally:
-            # Reference images are large; drop them once the job is over
+            # Reference images and uploads are large; drop them once the job is over
             job["request"]["refs"] = []
+            job["request"]["media"] = {}
             job["finished"] = time.time()
             _prune_jobs()
 
@@ -1060,10 +1212,21 @@ def _public_record(r: dict) -> dict:
         # Older entries only stored a description like "Name (scale=0.8)"
         desc = r.get("lora_adapter") or "None"
         lora = NONE_LORA if desc == "None" else desc.rsplit(" (scale=", 1)[0]
+    video = _is_video(name)
     return {
         "file": name,
         "url": f"/outputs/{name}",
         "thumb": f"/thumbs/{name}",
+        "media": "video" if video else "image",
+        "kind": r.get("kind", "render"),
+        "workflow": r.get("workflow"),
+        "workflow_name": r.get("workflow_name"),
+        "fps": r.get("fps"),
+        "frames": r.get("frames"),
+        "duration": r.get("duration"),
+        "values": r.get("values"),
+        "form": r.get("form"),
+        "source_image": r.get("source_image"),
         "prompt": r.get("prompt", ""),
         "mode": r.get("mode", "Text to Image"),
         "seed": r.get("seed"),
@@ -1080,7 +1243,7 @@ def _public_record(r: dict) -> dict:
         "upscaled_from": r.get("upscaled_from"),
         "enhance_prompt": r.get("enhance_prompt"),
         "original_prompt": r.get("original_prompt"),
-        "preview": f"/previews/{name}",
+        "preview": f"/outputs/{name}" if video else f"/previews/{name}",
         "created": r.get("created") or _mtime(name),
     }
 
@@ -1160,6 +1323,9 @@ def get_config():
         "local_loras": list_local_loras(),
         "lora_dir": str(LORA_DIR),
         "max_seed": MAX_SEED,
+        # The editor sits behind its own portal port; the page builds the link from its own hostname
+        "comfy": {"editor_url": os.environ.get("COMFY_EDITOR_URL", ""),
+                  "editor_port": os.environ.get("VAST_TCP_PORT_10200", "")},
     }
 
 
@@ -1272,12 +1438,13 @@ def cancel_job(job_id: str):
 @api.get("/api/history")
 def get_history(offset: int = 0, limit: int = 60, q: str = ""):
     records = _read_records()
-    files = sorted((p.name for p in OUTPUT_DIR.glob("*.png")), reverse=True)
+    files = sorted((p.name for p in OUTPUT_DIR.iterdir() if SAFE_NAME.match(p.name) and not p.name.startswith(".")), reverse=True)
     items = [_public_record(records.get(f, {"file": f})) for f in files]
     if q.strip():
         needle = q.strip().lower()
         items = [i for i in items if needle in i["prompt"].lower() or needle in (i["original_prompt"] or "").lower()
-                 or needle in (i["lora"] or "").lower()]
+                 or needle in (i["lora"] or "").lower() or needle in (i["workflow_name"] or "").lower()
+                 or (needle == "video" and i["media"] == "video")]
     limit = max(1, min(limit, 200))
     return {"items": items[offset:offset + limit], "total": len(items)}
 
@@ -1291,8 +1458,8 @@ def _delete_outputs(names: list[str]) -> list[str]:
         except HTTPException:
             continue
         path.unlink()
-        (THUMB_DIR / (name[:-4] + ".webp")).unlink(missing_ok=True)
-        (THUMB_DIR / (name[:-4] + ".preview.webp")).unlink(missing_ok=True)
+        (THUMB_DIR / (path.stem + ".webp")).unlink(missing_ok=True)
+        (THUMB_DIR / (path.stem + ".preview.webp")).unlink(missing_ok=True)
         deleted.append(name)
     if deleted:
         gone = set(deleted)
@@ -1388,14 +1555,17 @@ def delete_prompt(prompt_id: str):
 def get_output(name: str, download: int = 0):
     path = _checked_output(name)
     headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    media_type = MEDIA_TYPES[path.suffix]
     if download:
-        return FileResponse(path, media_type="image/png", filename=f"obscura-{name}", headers=headers)
-    return FileResponse(path, media_type="image/png", headers=headers)
+        return FileResponse(path, media_type=media_type, filename=f"obscura-{name}", headers=headers)
+    return FileResponse(path, media_type=media_type, headers=headers)
 
 
 @api.post("/api/enhance")
 def post_enhance(body: dict):
     path = _checked_output(body.get("file", ""))
+    if _is_video(path.name):
+        raise UserError("Enhance works on images, not videos.")
     try:
         strength = float(body.get("strength", 0.3))
         steps = int(body.get("steps", 40))
@@ -1440,6 +1610,8 @@ def post_upscale(body: dict):
     if not (UPSCALER_DIR / UPSCALERS[key]["file"]).is_file():
         raise UserError(f"{UPSCALERS[key]['label']} weights are missing from {UPSCALER_DIR}.")
     path = _checked_output(body.get("file", ""))
+    if _is_video(path.name):
+        raise UserError("Upscaling works on images, not videos.")
     with Image.open(path) as im:
         w, h = im.size
     if w * h > UPSCALE_MAX_INPUT:
@@ -1479,10 +1651,12 @@ def get_related(name: str):
 def get_preview(name: str):
     """Large images (upscales) get a screen-sized WebP; everything else is served as is."""
     src = _checked_output(name)
+    if _is_video(name):
+        return get_output(name)
     with Image.open(src) as img:
         if img.width * img.height <= 9_000_000:
             return FileResponse(src, media_type="image/png", headers={"Cache-Control": "public, max-age=31536000, immutable"})
-    preview = THUMB_DIR / (name[:-4] + ".preview.webp")
+    preview = THUMB_DIR / (src.stem + ".preview.webp")
     if not preview.exists():
         with Image.open(src) as img:
             img.thumbnail((3072, 3072), Image.LANCZOS)
@@ -1493,13 +1667,164 @@ def get_preview(name: str):
 @api.get("/thumbs/{name}")
 def get_thumb(name: str):
     src = _checked_output(name)
-    thumb = THUMB_DIR / (name[:-4] + ".webp")
+    thumb = THUMB_DIR / (src.stem + ".webp")
     if not thumb.exists():
-        with Image.open(src) as img:
+        # Videos are represented by their first frame
+        source = io.BytesIO(comfy_bridge.first_frame_png(src)) if _is_video(name) else src
+        with Image.open(source) as img:
             img.thumbnail((640, 640), Image.LANCZOS)
             img.save(thumb, "WEBP", quality=86, method=5)
     return FileResponse(thumb, media_type="image/webp",
                         headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+# ============================================================
+# Workflows (ComfyUI)
+# ============================================================
+def _bridge(fn, *a):
+    try:
+        return fn(*a)
+    except comfy_bridge.BridgeError as e:
+        raise UserError(str(e))
+
+
+def _comfy_status() -> dict:
+    return {**comfy_bridge.status(), "qwen_on_gpu": QWEN["on_gpu"], "qwen_moving": QWEN["moving"],
+            "keep_loaded": bool(_read_settings().get("comfy_keep_loaded"))}
+
+
+@api.get("/api/workflows")
+def get_workflows():
+    return {"items": comfy_bridge.list_workflows(), "comfy": _comfy_status()}
+
+
+@api.post("/api/workflows")
+def post_workflow(body: dict):
+    return _bridge(comfy_bridge.import_workflow, body.get("name", ""), body.get("graph"), body.get("description", ""))
+
+
+@api.put("/api/workflows/{slug}")
+def put_workflow(slug: str, body: dict):
+    return _bridge(comfy_bridge.update_workflow, slug, body)
+
+
+@api.delete("/api/workflows/{slug}")
+def delete_workflow(slug: str):
+    _bridge(comfy_bridge.delete_workflow, slug)
+    return {"ok": True}
+
+
+@api.get("/api/workflows/{slug}/graph")
+def get_workflow_graph(slug: str):
+    """The stored API graph, so the Edit fields dialog can offer every node input."""
+    graph, _ = _bridge(comfy_bridge.load, slug)
+    return graph
+
+
+async def _media_upload(field: dict, upload) -> tuple[str, bytes]:
+    data = await upload.read()
+    if not data:
+        raise UserError(f"{field['label']}: the file is empty.")
+    if field["type"] == "image":
+        try:
+            img = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+            img.load()
+        except Exception:
+            raise UserError(f"{upload.filename} is not an image we can read.")
+        buf = io.BytesIO()
+        img.convert("RGBA" if img.mode in ("RGBA", "LA", "P") else "RGB").save(buf, "PNG")
+        return "input.png", buf.getvalue()
+    ext = Path(upload.filename or "").suffix.lower()
+    if ext not in comfy_bridge.VIDEO_EXTS:
+        raise UserError(f"{upload.filename} is not a video file (use MP4, WebM, MOV, MKV or GIF).")
+    return f"input{ext}", data
+
+
+@api.post("/api/workflows/{slug}/run")
+async def run_workflow(slug: str, request: Request):
+    form = await request.form()
+    try:
+        params = json.loads(form.get("params") or "{}")
+    except json.JSONDecodeError:
+        raise UserError("Malformed request.")
+    graph, meta = _bridge(comfy_bridge.load, slug)
+    values = _bridge(comfy_bridge.resolve_values, meta, params.get("values") or {}, params.get("randomize") or {})
+    library = params.get("library") or {}
+    media, display, source = {}, [], None
+    for f in meta.get("fields", []):
+        key = f["key"]
+        if f["type"] in ("image", "video"):
+            upload = form.get(f"file_{key}")
+            if upload is not None and getattr(upload, "filename", None):
+                media[key] = await _media_upload(f, upload)
+                display.append([f["label"], upload.filename])
+            elif library.get(key):
+                path = _checked_output(str(library[key]))
+                if _is_video(path.name) != (f["type"] == "video"):
+                    raise UserError(f"{f['label']} needs {'a video' if f['type'] == 'video' else 'an image'}.")
+                media[key] = (path.name, path.read_bytes())
+                display.append([f["label"], path.name])
+                if f["type"] == "image" and source is None:
+                    source = path.name
+            elif not f.get("hidden") and not f.get("default"):
+                raise UserError(f"Add {f['label'].lower()} first.")
+        elif not f.get("hidden") and f["type"] not in ("text", "seed") and key in values:
+            display.append([f["label"], values[key]])
+    texts = [f for f in meta.get("fields", []) if f["type"] == "text" and not f.get("hidden")]
+    prompt_field = next((f for f in texts if "negative" not in f["label"].lower()), None)
+    prompt = str(values.get(prompt_field["key"], "")) if prompt_field else ""
+    seed_field = next((f for f in meta.get("fields", []) if f["type"] == "seed"), None)
+    steps_field = next((f for f in meta.get("fields", []) if f["key"] == "steps"), None)
+    size = meta.get("size") or {}
+    w, h = values.get(size.get("width")), values.get(size.get("height"))
+    estimate = sum(comfy_bridge.sampler_steps(comfy_bridge.patch(graph, meta, values, {})).values())
+    job_id = uuid.uuid4().hex[:12]
+    JOBS[job_id] = {
+        "id": job_id, "status": "queued", "phase": "Queued", "step": 0,
+        "cancel": False, "created": time.time(),
+        "request": {
+            "kind": "comfy", "slug": slug, "name": meta.get("name", slug), "output": meta.get("output", "image"),
+            "graph": graph, "meta": meta, "values": values, "media": media, "display": display, "source": source,
+            "prompt": prompt, "seed": values.get(seed_field["key"]) if seed_field else None,
+            "steps_value": values.get("steps") if steps_field else None,
+            "steps": estimate or 1, "aspect": (w / h) if w and h else 1.0,
+            "ratio": "", "resolution": "", "mode": "Workflow", "refs": [],
+        },
+    }
+    JOB_ORDER.put(job_id)
+    return _job_view(JOBS[job_id])
+
+
+@api.get("/api/comfy/status")
+def get_comfy_status():
+    return _comfy_status()
+
+
+def _move_qwen(to_gpu: bool):
+    try:
+        with GPU_LOCK:
+            unpark_qwen() if to_gpu else park_qwen()
+    except Exception:
+        traceback.print_exc()
+    finally:
+        QWEN["moving"] = False
+
+
+@api.post("/api/comfy/park")
+def post_comfy_park(body: dict):
+    """Free the GPU for the ComfyUI editor (park), or bring Qwen back early (unpark)."""
+    to_gpu = body.get("action") == "unpark"
+    if not QWEN["moving"] and QWEN["on_gpu"] != to_gpu:
+        QWEN["moving"] = True
+        threading.Thread(target=_move_qwen, args=(to_gpu,), daemon=True, name="qwen-move").start()
+    return _comfy_status()
+
+
+@api.put("/api/comfy/settings")
+def put_comfy_settings(body: dict):
+    if "keep_loaded" in body:
+        _write_settings(comfy_keep_loaded=bool(body["keep_loaded"]))
+    return _comfy_status()
 
 
 @api.get("/")

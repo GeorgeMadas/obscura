@@ -170,6 +170,15 @@ def _run(job: dict):
         _prune()
 
 
+def park():
+    """Move the rewriter on the GPU (if any) to CPU memory, so ComfyUI gets the VRAM. Waits for a running rewrite."""
+    with _LOCK:
+        for kind in _ON_GPU:
+            _LOADED[kind][0].to("cpu")
+        _ON_GPU.clear()
+        torch.cuda.empty_cache()
+
+
 def _prune():
     cutoff = time.time() - 1800
     for jid in [k for k, j in JOBS.items() if j.get("finished", time.time()) < cutoff]:

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Obscura / Qwen Image auto-provisioning for Vast.ai (implements SETUP.md steps 0-8 + Claude Code)
+# Obscura / Qwen Image auto-provisioning for Vast.ai (implements SETUP.md steps 0-9 + Claude Code)
 # The Vast template's on-start downloads this file from main and runs it in the background, so
 # edits here apply to every NEW instance. Needs GITHUB_TOKEN in the Vast account env vars.
 # Log: /var/log/obscura-provision.log   Done marker: /workspace/.obscura-provisioned
@@ -67,5 +67,9 @@ cd "$APP" && $PY deploy/prefetch_models.py || log "prefetch FAILED"
 until supervisorctl pid >/dev/null 2>&1; do sleep 5; done
 cp "$APP/deploy/service/qwen-image.conf" /etc/supervisor/conf.d/qwen-image.conf
 supervisorctl reread && supervisorctl update
+
+# 9. ComfyUI (video workflows; editor on portal port 10200)
+bash "$APP/deploy/install_comfyui.sh" || log "ComfyUI install FAILED"
+
 touch /workspace/.obscura-provisioned
-log "Provisioning complete - Qwen Image is loading (portal port 10100)"
+log "Provisioning complete - Qwen Image is loading (portal port 10100), ComfyUI editor on 10200"
