@@ -1,3 +1,4 @@
 {
-  "checkpoint": "qwen-image-2.1-UC-BF16.gguf"
+  "checkpoint": "qwen-image-2.1-UC-Q4_K_M.gguf",
+  "comfy_keep_loaded": false
 }

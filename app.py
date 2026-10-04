@@ -17,6 +17,7 @@ from pathlib import Path
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import numpy as np
+import requests
 import torch
 import spandrel
 import uvicorn
@@ -1323,9 +1324,6 @@ def get_config():
         "local_loras": list_local_loras(),
         "lora_dir": str(LORA_DIR),
         "max_seed": MAX_SEED,
-        # The editor sits behind its own portal port; the page builds the link from its own hostname
-        "comfy": {"editor_url": os.environ.get("COMFY_EDITOR_URL", ""),
-                  "editor_port": os.environ.get("VAST_TCP_PORT_10200", "")},
     }
 
 
@@ -1793,6 +1791,38 @@ async def run_workflow(slug: str, request: Request):
     }
     JOB_ORDER.put(job_id)
     return _job_view(JOBS[job_id])
+
+
+PORTAL_API = "http://localhost:11111"
+COMFY_PORTAL_TARGET = "http://localhost:10200"
+
+
+def _comfy_tunnel(start: bool) -> str:
+    """The Cloudflare quick tunnel to the ComfyUI portal port, started on demand. Empty if unavailable."""
+    try:
+        for t in requests.get(f"{PORTAL_API}/get-all-quick-tunnels", timeout=3).json():
+            if t.get("targetUrl") == COMFY_PORTAL_TARGET and t.get("tunnelUrl"):
+                return t["tunnelUrl"]
+        if start:
+            r = requests.post(f"{PORTAL_API}/start-quick-tunnel/{requests.utils.quote(COMFY_PORTAL_TARGET, safe='')}", timeout=30)
+            return r.json().get("tunnel_url") or ""
+    except (requests.RequestException, ValueError):
+        pass
+    return ""
+
+
+@api.get("/api/comfy/editor")
+def get_comfy_editor(tunnel: int = 0):
+    """Where the ComfyUI editor is reachable from the browser. The page passes tunnel=1 when it was itself opened
+    through a Cloudflare tunnel, since the direct port isn't on that hostname. The token is the one this page was
+    opened with (Caddy already checked it), so the new tab doesn't ask again."""
+    token = os.environ.get("OPEN_BUTTON_TOKEN") or os.environ.get("WEB_PASSWORD") or ""
+    return {
+        "url": os.environ.get("COMFY_EDITOR_URL", ""),
+        "port": os.environ.get("VAST_TCP_PORT_10200", ""),
+        "tunnel": _comfy_tunnel(start=True) if tunnel else "",
+        "token": token,
+    }
 
 
 @api.get("/api/comfy/status")

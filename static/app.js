@@ -1663,10 +1663,16 @@
   const wfRand = (wf) => (wfVals(wf), W.rand[wf.slug]);
   const wfMedia = (wf) => (W.media[wf.slug] ||= {});
   const saveWf = (wf) => store.set("wf:" + wf.slug, { vals: wfVals(wf), rand: wfRand(wf) });
-  function editorUrl() {
-    const c = S.cfg.comfy || {};
-    if (c.editor_url) return c.editor_url;
-    return c.editor_port ? `${location.protocol}//${location.hostname}:${c.editor_port}/` : "";
+  // Through a Cloudflare tunnel the direct port doesn't exist on this hostname, so ComfyUI gets its own tunnel
+  const viaTunnel = () => location.hostname.endsWith(".trycloudflare.com");
+  async function loadEditorUrl() {
+    let e;
+    try { e = await api(`/api/comfy/editor?tunnel=${viaTunnel() ? 1 : 0}`); } catch { return ""; }
+    const base = e.url || (viaTunnel() ? e.tunnel : e.port ? `${location.protocol}//${location.hostname}:${e.port}` : "");
+    if (!base) return "";
+    const u = new URL(base.replace(/\/?$/, "/"));
+    if (e.token) u.searchParams.set("token", e.token);
+    return u.toString();
   }
 
   async function loadWorkflows() {
@@ -1689,11 +1695,14 @@
     try { W.comfy = await api("/api/comfy/status"); } catch { return; }
     renderWfStatus();
   }
-  function renderWorkflows() {
-    const url = editorUrl();
+  async function renderEditorLink() {
     const ed = $("#wfEditor");
-    ed.hidden = !url;
-    if (url) ed.href = url;
+    if (!W.editor) W.editor = await loadEditorUrl();
+    ed.hidden = !W.editor;
+    if (W.editor) ed.href = W.editor;
+  }
+  function renderWorkflows() {
+    renderEditorLink();
     renderWfStatus();
     renderWfList();
     renderWfPanel();
