@@ -1733,6 +1733,8 @@
     );
   }
 
+  // Motion transfer (takes a driving video) / image-to-video / still-image workflows
+  const wfIcon = (wf) => wf.fields.some((f) => f.type === "video") ? "person-simple-run" : wf.output === "video" ? "film-slate" : "image";
   function renderWfList() {
     const list = $("#wfList");
     if (!W.items.length) {
@@ -1743,7 +1745,7 @@
       class: "wf-item", type: "button", style: `--i:${i}`, "aria-current": String(wf.slug === W.sel),
       onclick: () => { W.sel = wf.slug; store.set("wfSel", wf.slug); W.showHidden = false; renderWfList(); renderWfPanel(); },
     },
-    h("span", { class: "wf-item-icon" }, icon(wf.output === "video" ? "film-strip" : "image")),
+    h("span", { class: "wf-item-icon" }, icon(wfIcon(wf))),
     h("span", { class: "wf-item-t" }, h("strong", {}, wf.name), h("small", {}, wf.description || (wf.preset ? "Preset" : "Imported workflow"))),
     wf.preset ? null : h("span", { class: "badge" }, "Yours"))));
   }
