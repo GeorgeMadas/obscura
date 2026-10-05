@@ -162,7 +162,7 @@ lines match the values above.
 ## 6. App data that doesn't come from git
 
 These are per-instance and intentionally not in the repo — nothing to do, just know they exist:
-`outputs/` (generated images), `history.jsonl` (Library history), `loras/*` (user-added local LoRAs).
+`outputs/` (generated images), `history.jsonl` (Library history), `likes.json` (liked images), `loras/*` (user-added local LoRAs).
 `app.py` creates them as needed. `prompts.json` and `settings.json` *are* in git.
 
 ## 7. Claude Code extras
@@ -278,7 +278,7 @@ Both instances are clones of `GeorgeMadas/obscura`. After changing app code: com
 on the other instance `git pull` then `supervisorctl restart qwen-image`. If step 3 changed
 (`deploy/requirements.txt` or the kernel installs), rerun step 3 before restarting. If ComfyUI files changed
 (`deploy/install_comfyui.sh`, `deploy/service/comfyui.*`, `deploy/prefetch_comfy.py`), rerun step 9.
-Never commit `outputs/` or `history.jsonl` (gitignored). `settings.json` holds the model the user picked in the
+Never commit `outputs/` or `history.jsonl` or `likes.json` (gitignored). `settings.json` holds the model the user picked in the
 UI; it's in git as the default for new instances, but leave local changes to it uncommitted unless the user asks.
 
 **Catching up an instance set up before 2026-10-04** (after `git pull`):

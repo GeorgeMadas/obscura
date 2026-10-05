@@ -7,3 +7,4 @@ upscalers/*.pth
 upscalers/*.safetensors
 loras/*
 !loras/.gitkeep
+likes.json

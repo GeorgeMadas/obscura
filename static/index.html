@@ -33,6 +33,9 @@
         <a class="rail-link" href="#/create" data-nav="create" role="listitem">
           <i class="ph ph-aperture" aria-hidden="true"></i><span>Create</span>
         </a>
+        <a class="rail-link" href="#/liked" data-nav="liked" role="listitem">
+          <i class="ph ph-heart" aria-hidden="true"></i><span>Liked</span>
+        </a>
         <a class="rail-link" href="#/library" data-nav="library" role="listitem">
           <i class="ph ph-squares-four" aria-hidden="true"></i><span>Library</span>
         </a>
@@ -177,6 +180,23 @@
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
+    <!-- ===================== LIKED ===================== -->
+    <main class="view view-liked" id="view-liked" aria-label="Liked" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Liked</h1>
+          <p class="sub" id="likedCount">The renders you liked.</p>
+        </div>
+      </header>
+      <div class="masonry" id="likedMasonry"></div>
+      <div class="library-empty" id="likedEmpty" hidden>
+        <svg class="mark mark-lg" aria-hidden="true"><use href="#mark"/></svg>
+        <h2>No liked images yet</h2>
+        <p>Tap the heart in the top right corner of any image to keep it here.</p>
+        <a class="btn btn-primary" href="#/create">Start creating</a>
+      </div>
+    </main>
+
     <!-- ===================== LIBRARY ===================== -->
     <main class="view view-library" id="view-library" aria-label="Library" hidden>
       <header class="page-head">
@@ -280,7 +300,10 @@
     <aside class="lb-panel">
       <div class="lb-top">
         <span class="lb-date" id="lbDate"></span>
-        <button class="icon-btn" id="lbClose" aria-label="Close"><i class="ph ph-x"></i></button>
+        <div class="lb-top-btns">
+          <button class="icon-btn like-btn" id="lbLike" type="button" aria-label="Like" aria-pressed="false" title="Like"><i class="ph ph-heart"></i></button>
+          <button class="icon-btn" id="lbClose" aria-label="Close"><i class="ph ph-x"></i></button>
+        </div>
       </div>
       <dl class="lb-specs" id="lbSpecs"></dl>
       <div class="lb-prompt-wrap">
@@ -330,7 +353,7 @@
         <li><span>Confirm rewritten prompt</span><span><kbd>Ctrl</kbd><kbd>Enter</kbd></span></li>
         <li><span>New line in prompt</span><span><kbd>Shift</kbd><kbd>Enter</kbd></span></li>
         <li><span>Focus prompt or search</span><span><kbd>/</kbd></span></li>
-        <li><span>Create, Library, Styles, Prompts, Workflows</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd></span></li>
+        <li><span>Create, Library, Styles, Prompts, Workflows, Liked</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd><kbd>6</kbd></span></li>
         <li><span>Browse in full view</span><span><kbd>←</kbd><kbd>→</kbd></span></li>
         <li><span>Zoom in full view</span><span><kbd>Scroll</kbd> or <kbd>+</kbd><kbd>-</kbd></span></li>
         <li><span>Fit to screen</span><span><kbd>0</kbd></span></li>

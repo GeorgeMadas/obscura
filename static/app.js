@@ -52,6 +52,7 @@
     failed: [],                    // { id, error, aspect } render failures shown in the grid until dismissed
     jobs: new Map(),
     lib: { items: [], total: 0, q: "", loading: false, done: false, loaded: false },
+    liked: { items: [], loading: false, loaded: false },
     covers: {},
     styleFilter: "All",
   };
@@ -127,7 +128,7 @@
   }
 
   // ---------------------------------------------------------------- router
-  const VIEWS = ["create", "library", "styles", "prompts", "workflows"];
+  const VIEWS = ["create", "liked", "library", "styles", "prompts", "workflows"];
   function route() {
     const [path] = location.hash.replace(/^#\/?/, "").split("?");
     const view = VIEWS.includes(path) ? path : "create";
@@ -136,6 +137,7 @@
       for (const v of VIEWS) $(`#view-${v}`).hidden = v !== view;
       $$(".rail-link").forEach((a) => a.classList.toggle("active", a.dataset.nav === view));
       if (view === "library") ensureLibrary();
+      if (view === "liked") ensureLiked();
       if (view === "styles") renderStyles();
       if (view === "prompts") ensurePrompts();
       if (view === "workflows") ensureWorkflows(); else stopWfStatus();
@@ -1006,15 +1008,9 @@
       deleteFiles([rec.file]);
     });
     const video = isVideo(rec);
-    const actions = isComfy(rec)
-      ? [act("arrow-counter-clockwise", "Reuse workflow settings", () => reuse(rec))]
-      : [act("arrow-counter-clockwise", "Reuse settings", () => { reuse(rec); toast("Settings restored, seed fixed.", { type: "ok" }); }),
-         act("shuffle", "New seed", () => { reuse(rec); S.seedLocked = false; syncControls(); generate(); })];
-    if (!video) {
-      actions.push(act("paint-brush-broad", "Edit", () => editRecord(rec)));
-      if (canEnhance(rec)) actions.push(act("sparkle", "Enhance detail", () => enhance(rec)));
-      actions.push(act("film-strip", "Animate", () => animate(rec)));
-    }
+    const reuseBtn = isComfy(rec)
+      ? act("arrow-counter-clockwise", "Reuse workflow settings", () => reuse(rec))
+      : act("arrow-counter-clockwise", "Reuse settings", () => { reuse(rec); toast("Settings restored, seed fixed.", { type: "ok" }); });
     const el = h("div", {
       class: `ftile ftile-img${rec.mode === "Transparent PNG" ? " alpha" : ""}${SEL.files.has(rec.file) ? " selected" : ""}`,
       role: "button", tabindex: "0", "data-file": rec.file,
@@ -1025,9 +1021,10 @@
     rec.upscaler ? h("span", { class: "ftile-badge" }, rec.upscaler) : null,
     video ? videoBadge(rec) : null,
     h("span", { class: "sel-check", "aria-hidden": "true" }, icon("check", false)),
+    likeBtn(rec),
     h("div", { class: "ftile-over" },
       h("p", {}, rec.prompt || rec.workflow_name || "Untitled"),
-      h("div", { class: "ftile-actions" }, ...actions, act("download-simple", "Download", () => downloadFiles([rec])), trash)));
+      h("div", { class: "ftile-actions" }, reuseBtn, act("download-simple", "Download", () => downloadFiles([rec])), trash)));
     if (video) hoverPlay(el, rec);
     return el;
   }
@@ -1209,15 +1206,19 @@
     $("#masonry").replaceChildren(...ars.map((a) => h("div", { class: "tile skeleton", style: `aspect-ratio:${a};cursor:default` })));
     $("#libraryEmpty").hidden = true;
   }
-  function tileFor(rec, i) {
+  function tileFor(rec, i, source = "library") {
     const ar = rec.width && rec.height ? `${rec.width}/${rec.height}` : "1";
     const img = h("img", { src: rec.thumb, alt: rec.prompt, loading: "lazy", decoding: "async", style: `aspect-ratio:${ar}` });
     img.addEventListener("load", () => img.classList.add("loaded"));
     const label = isComfy(rec) ? rec.workflow_name || "Workflow" : rec.upscaler || styleName(rec.lora);
-    const el = h("button", {
-      class: `tile${SEL.files.has(rec.file) ? " selected" : ""}`, type: "button", style: `--i:${i % 12}`, "data-file": rec.file,
-      onclick: (e) => tileClick(e, rec, S.lib.items, () => openLightbox(S.lib.items, S.lib.items.indexOf(rec), "library")),
-    }, img, isVideo(rec) ? videoBadge(rec) : null, h("span", { class: "sel-check", "aria-hidden": "true" }, icon("check", false)), h("div", { class: "tile-over" },
+    const list = () => (source === "liked" ? S.liked.items : S.lib.items);
+    const open = () => openLightbox(list(), list().indexOf(rec), source);
+    const el = h("div", {
+      class: `tile${SEL.files.has(rec.file) ? " selected" : ""}`, role: "button", tabindex: "0", style: `--i:${i % 12}`, "data-file": rec.file,
+      "aria-label": rec.prompt ? `Open: ${rec.prompt.slice(0, 80)}` : "Open render",
+      onclick: (e) => tileClick(e, rec, list(), open),
+      onkeydown: (e) => { if (e.target === el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(); } },
+    }, img, isVideo(rec) ? videoBadge(rec) : null, h("span", { class: "sel-check", "aria-hidden": "true" }, icon("check", false)), likeBtn(rec), h("div", { class: "tile-over" },
       h("p", {}, rec.prompt || rec.workflow_name || "Untitled"),
       h("span", {}, `${label}  ${rec.width || ""}×${rec.height || ""}`)));
     if (isVideo(rec)) hoverPlay(el, rec);
@@ -1240,6 +1241,76 @@
       empty.querySelector("h2").textContent = "Nothing here yet";
       empty.querySelector("p").textContent = "Your renders land here automatically, newest first.";
     }
+  }
+
+  // ---------------------------------------------------------------- likes
+  function likeBtn(rec) {
+    const b = h("button", { class: "icon-btn like-btn", type: "button", "data-like": rec.file,
+      onclick: (e) => { e.stopPropagation(); toggleLike(rec); },
+      onkeydown: (e) => e.stopPropagation() }, icon("heart"));
+    paintLike(b, !!rec.liked);
+    return b;
+  }
+  function paintLike(b, on) {
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+    b.setAttribute("aria-label", on ? "Unlike" : "Like");
+    b.title = on ? "Unlike" : "Like";
+    b.querySelector("i").className = `${on ? "ph-fill" : "ph"} ph-heart`;
+  }
+  function markLiked(file, on) {
+    for (const r of [...S.feed.items, ...S.lib.items, ...S.liked.items, ...LB.list]) if (r.file === file) r.liked = on;
+    $$(".like-btn").forEach((b) => { if (b.dataset.like === file) paintLike(b, on); });
+    const cur = LB.list[LB.i];
+    if (!$("#lightbox").hidden && cur && cur.file === file) paintLike($("#lbLike"), on);
+  }
+  async function toggleLike(rec) {
+    const on = !rec.liked;
+    markLiked(rec.file, on);
+    try {
+      await api("/api/likes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: rec.file, liked: on }) });
+    } catch (e) {
+      markLiked(rec.file, !on);
+      toast(e.message, { type: "error" });
+      return;
+    }
+    if (on) S.liked.loaded = false;
+    else S.liked.items = S.liked.items.filter((r) => r.file !== rec.file);
+    if ($("#app").dataset.view === "liked") on ? loadLiked() : renderLiked();
+  }
+  function ensureLiked() {
+    if (!S.liked.loaded) loadLiked();
+    else renderLiked();
+  }
+  async function loadLiked() {
+    if (S.liked.loading) return;
+    S.liked.loading = true;
+    if (!S.liked.items.length) {
+      const ars = [1, 0.75, 1.33, 1];
+      $("#likedMasonry").replaceChildren(...ars.map((a) => h("div", { class: "tile skeleton", style: `aspect-ratio:${a};cursor:default` })));
+      $("#likedEmpty").hidden = true;
+    }
+    try {
+      const items = [];
+      for (;;) {
+        const res = await api(`/api/history?liked=1&offset=${items.length}&limit=200`);
+        items.push(...res.items);
+        if (!res.items.length || items.length >= res.total) break;
+      }
+      S.liked.items = items;
+      S.liked.loaded = true;
+      renderLiked();
+    } catch (e) {
+      toast(e.message, { type: "error" });
+    } finally {
+      S.liked.loading = false;
+    }
+  }
+  function renderLiked() {
+    const n = S.liked.items.length;
+    $("#likedMasonry").replaceChildren(...S.liked.items.map((r, i) => tileFor(r, i, "liked")));
+    $("#likedCount").textContent = n ? `${n} liked render${n === 1 ? "" : "s"}, newest first.` : "The renders you liked.";
+    $("#likedEmpty").hidden = n > 0;
   }
 
   // ---------------------------------------------------------------- lightbox
@@ -1348,6 +1419,7 @@
     $("#enhAddOriginal").hidden = !rec.prompt;
     renderEnhanceHint();
     $("#lbDownload").href = rec.url + "?download=1";
+    paintLike($("#lbLike"), !!rec.liked);
     $("#lbPrev").disabled = LB.i <= 0;
     $("#lbNext").disabled = LB.i >= LB.list.length - 1 && !(LB.source === "library" && !S.lib.done) && !(LB.source === "feed" && !S.feed.done);
     resetDelete();
@@ -1580,7 +1652,7 @@
     }
     const rec = LB.list[LB.i];
     if (!(await deleteFiles([rec.file]))) return;
-    if (LB.list !== S.lib.items && LB.list !== S.feed.items) {
+    if (LB.list !== S.lib.items && LB.list !== S.feed.items && LB.list !== S.liked.items) {
       const k = LB.list.findIndex((r) => r.file === rec.file);
       if (k >= 0) LB.list.splice(k, 1);
     }
@@ -1614,7 +1686,7 @@
     resetSelDelete();
     document.body.classList.toggle("selecting", n > 0);
   }
-  const findRec = (file) => S.feed.items.find((r) => r.file === file) || S.lib.items.find((r) => r.file === file);
+  const findRec = (file) => [S.feed.items, S.lib.items, S.liked.items].map((l) => l.find((r) => r.file === file)).find(Boolean);
   function downloadFiles(recs) {
     // Plain PNG downloads, one after another (browsers may ask once to allow multiple downloads)
     recs.forEach((rec, i) => setTimeout(() => {
@@ -1634,14 +1706,17 @@
     const before = { feed: S.feed.items.length, lib: S.lib.items.length };
     S.feed.items = S.feed.items.filter((r) => !gone.has(r.file));
     S.lib.items = S.lib.items.filter((r) => !gone.has(r.file));
+    S.liked.items = S.liked.items.filter((r) => !gone.has(r.file));
     S.feed.total = Math.max(0, S.feed.total - (before.feed - S.feed.items.length));
     S.lib.total = Math.max(0, S.lib.total - (before.lib - S.lib.items.length));
     if (LB.source === "feed") LB.list = S.feed.items;
     if (LB.source === "library") LB.list = S.lib.items;
+    if (LB.source === "liked") LB.list = S.liked.items;
     for (const k of Object.keys(S.covers)) if ([...gone].some((f) => S.covers[k].endsWith("/" + f))) delete S.covers[k];
     for (const f of gone) SEL.files.delete(f);
     renderFeed();
     if (S.lib.loaded) renderLibrary(true);
+    if (S.liked.loaded) renderLiked();
     syncSelection();
     toast(gone.size === 1 ? "Deleted." : `Deleted ${gone.size} images.`, { type: "ok" });
     return true;
@@ -2235,6 +2310,7 @@
     const view = $("#app").dataset.view;
     if (e.key === "/") { e.preventDefault(); (view === "library" ? $("#librarySearch") : view === "create" ? $("#prompt") : null)?.focus(); }
     if (e.key === "5") go("workflows");
+    if (e.key === "6") go("liked");
     if (e.key === "1") go("create");
     if (e.key === "2") go("library");
     if (e.key === "3") go("styles");
@@ -2293,6 +2369,7 @@
 
     // Lightbox
     $("#lbClose").addEventListener("click", closeLightbox);
+    $("#lbLike").addEventListener("click", () => { const rec = LB.list[LB.i]; if (rec) toggleLike(rec); });
     $("#lbPrev").addEventListener("click", () => lbStep(-1));
     $("#lbNext").addEventListener("click", () => lbStep(1));
     wireZoom();

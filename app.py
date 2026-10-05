@@ -1217,7 +1217,7 @@ def _read_records() -> dict[str, dict]:
     return records
 
 
-def _public_record(r: dict) -> dict:
+def _public_record(r: dict, likes: set[str] | None = None) -> dict:
     name = r["file"]
     dims = r.get("dimensions", "")
     w, _, h = dims.partition("x")
@@ -1259,6 +1259,7 @@ def _public_record(r: dict) -> dict:
         "original_prompt": r.get("original_prompt"),
         "preview": f"/outputs/{name}" if video else f"/previews/{name}",
         "created": r.get("created") or _mtime(name),
+        "liked": name in (_read_likes() if likes is None else likes),
     }
 
 
@@ -1447,10 +1448,13 @@ def cancel_job(job_id: str):
 
 
 @api.get("/api/history")
-def get_history(offset: int = 0, limit: int = 60, q: str = ""):
+def get_history(offset: int = 0, limit: int = 60, q: str = "", liked: bool = False):
     records = _read_records()
     files = sorted((p.name for p in OUTPUT_DIR.iterdir() if SAFE_NAME.match(p.name) and not p.name.startswith(".")), reverse=True)
-    items = [_public_record(records.get(f, {"file": f})) for f in files]
+    likes = _read_likes()
+    if liked:
+        files = [f for f in files if f in likes]
+    items = [_public_record(records.get(f, {"file": f}), likes) for f in files]
     if q.strip():
         needle = q.strip().lower()
         items = [i for i in items if needle in i["prompt"].lower() or needle in (i["original_prompt"] or "").lower()
@@ -1458,6 +1462,37 @@ def get_history(offset: int = 0, limit: int = 60, q: str = ""):
                  or (needle == "video" and i["media"] == "video")]
     limit = max(1, min(limit, 200))
     return {"items": items[offset:offset + limit], "total": len(items)}
+
+
+LIKES_FILE = Path(os.environ.get("QWEN_LIKES_FILE", Path(__file__).resolve().parent / "likes.json"))
+LIKES_LOCK = threading.Lock()
+
+
+def _read_likes() -> set[str]:
+    try:
+        return set(json.loads(LIKES_FILE.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return set()
+
+
+def _write_likes(likes: set[str]):
+    tmp = LIKES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(sorted(likes)), encoding="utf-8")
+    tmp.replace(LIKES_FILE)
+
+
+@api.post("/api/likes")
+def set_like(body: dict):
+    name = str(body.get("file") or "")
+    _checked_output(name)
+    with LIKES_LOCK:
+        likes = _read_likes()
+        if body.get("liked"):
+            likes.add(name)
+        else:
+            likes.discard(name)
+        _write_likes(likes)
+    return {"file": name, "liked": name in likes}
 
 
 def _delete_outputs(names: list[str]) -> list[str]:
@@ -1485,6 +1520,10 @@ def _delete_outputs(names: list[str]) -> list[str]:
                         pass
                     kept.append(line)
                 HISTORY_LOG.write_text("".join(l + "\n" for l in kept), encoding="utf-8")
+        with LIKES_LOCK:
+            likes = _read_likes()
+            if likes & gone:
+                _write_likes(likes - gone)
     return deleted
 
 

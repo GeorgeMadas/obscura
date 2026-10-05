@@ -559,6 +559,26 @@ body.selecting .ftile-img .sel-check, body.selecting .tile .sel-check { opacity:
 .ftile.selected img, .tile.selected img { transform: scale(0.97); }
 body.selecting .ftile-img, body.selecting .tile { cursor: pointer; }
 .ftile-actions .icon-btn.confirm { background: var(--danger); color: #fff; }
+
+/* Like (heart) in the top right corner of every image */
+.like-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  width: 30px; height: 30px; font-size: 16px;
+  background: rgb(10 10 11 / 0.62); backdrop-filter: blur(8px); color: var(--fg);
+  opacity: 0; transform: scale(0.85);
+  transition: opacity 0.2s, transform 0.3s var(--spring), background-color 0.2s, color 0.2s;
+}
+.like-btn:hover { background: rgb(10 10 11 / 0.82); }
+.like-btn.on { color: var(--danger); }
+.ftile-img:hover .like-btn, .ftile-img:focus-within .like-btn, .tile:hover .like-btn, .tile:focus-within .like-btn,
+.like-btn.on { opacity: 1; transform: none; }
+.like-btn:active { transform: scale(0.88); }
+body.selecting .like-btn { opacity: 0; pointer-events: none; }
+@media (hover: none) { .like-btn { opacity: 1; transform: none; } }
+.lightbox .like-btn { position: static; opacity: 1; transform: none; background: transparent; backdrop-filter: none; color: var(--fg-2); }
+.lightbox .like-btn:hover { background: rgb(255 255 255 / 0.06); color: var(--fg); }
+.lightbox .like-btn.on { color: var(--danger); }
+.lb-top-btns { display: flex; align-items: center; gap: 4px; }
 .sel-bar {
   position: fixed; top: 14px; left: 50%; z-index: var(--z-toast);
   transform: translateX(-50%);
