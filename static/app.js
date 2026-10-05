@@ -1202,8 +1202,7 @@
     }
   }
   function showLibrarySkeleton() {
-    const ars = [1, 0.75, 1.33, 1, 0.56, 1.78, 1, 0.75];
-    $("#masonry").replaceChildren(...ars.map((a) => h("div", { class: "tile skeleton", style: `aspect-ratio:${a};cursor:default` })));
+    masonrySkeleton($("#masonry"));
     $("#libraryEmpty").hidden = true;
   }
   function tileFor(rec, i, source = "library") {
@@ -1224,10 +1223,42 @@
     if (isVideo(rec)) hoverPlay(el, rec);
     return el;
   }
+  // Library and Liked grids: same column count as the Create feed, and each tile goes into the
+  // shortest column in order, so newest-first reads left to right across the top rows
+  const masonryColumns = (m) => { const w = m.clientWidth; return w >= 860 ? 5 : w >= 600 ? 3 : 2; };
+  const recRatio = (rec) => (rec.width && rec.height ? rec.height / rec.width : 1);
+  function layoutMasonry(m, recs, source, from = 0) {
+    const n = masonryColumns(m);
+    let st = m._layout;
+    if (!st || from === 0 || st.n !== n || st.count !== from) {
+      st = m._layout = { n, count: 0, heights: new Array(n).fill(0), cols: Array.from({ length: n }, () => h("div", { class: "masonry-col" })) };
+      m.replaceChildren(...st.cols);
+      from = 0;
+    }
+    recs.slice(from).forEach((rec, j) => {
+      let k = 0;
+      for (let c = 1; c < n; c++) if (st.heights[c] < st.heights[k] - 0.02) k = c;
+      st.cols[k].append(tileFor(rec, from + j, source));
+      st.heights[k] += recRatio(rec) + 0.05;
+    });
+    st.count = recs.length;
+  }
+  function masonrySkeleton(m) {
+    m._layout = null;
+    const n = masonryColumns(m);
+    const ars = [1, 0.75, 1.33, 1, 0.56, 1.78, 1, 0.75, 1, 1.33];
+    m.replaceChildren(...Array.from({ length: n }, (_, c) => h("div", { class: "masonry-col" },
+      ...[0, 1].map((r) => h("div", { class: "tile skeleton", style: `aspect-ratio:${ars[(c + r * n) % ars.length]};cursor:default` })))));
+  }
+  function relayoutMasonry() {
+    const view = $("#app").dataset.view;
+    const m = view === "library" ? $("#masonry") : view === "liked" ? $("#likedMasonry") : null;
+    if (!m || !m._layout || masonryColumns(m) === m._layout.n) return;
+    if (view === "library") layoutMasonry(m, S.lib.items, "library");
+    else layoutMasonry(m, S.liked.items, "liked");
+  }
   function renderLibrary(reset, from = 0) {
-    const m = $("#masonry");
-    if (reset) m.replaceChildren();
-    m.append(...S.lib.items.slice(from).map((r, i) => tileFor(r, i)));
+    layoutMasonry($("#masonry"), S.lib.items, "library", reset ? 0 : from);
     const n = S.lib.total;
     $("#libraryCount").textContent = S.lib.q
       ? `${n} result${n === 1 ? "" : "s"} for “${S.lib.q}”`
@@ -1286,8 +1317,7 @@
     if (S.liked.loading) return;
     S.liked.loading = true;
     if (!S.liked.items.length) {
-      const ars = [1, 0.75, 1.33, 1];
-      $("#likedMasonry").replaceChildren(...ars.map((a) => h("div", { class: "tile skeleton", style: `aspect-ratio:${a};cursor:default` })));
+      masonrySkeleton($("#likedMasonry"));
       $("#likedEmpty").hidden = true;
     }
     try {
@@ -1308,7 +1338,7 @@
   }
   function renderLiked() {
     const n = S.liked.items.length;
-    $("#likedMasonry").replaceChildren(...S.liked.items.map((r, i) => tileFor(r, i, "liked")));
+    layoutMasonry($("#likedMasonry"), S.liked.items, "liked");
     $("#likedCount").textContent = n ? `${n} liked render${n === 1 ? "" : "s"}, newest first.` : "The renders you liked.";
     $("#likedEmpty").hidden = n > 0;
   }
@@ -2409,6 +2439,8 @@
 
     // Layout
     new ResizeObserver(() => { placeThumb(); if (feedColumns() !== FEED.cols) renderFeed(); }).observe($("#feed"));
+    const ro = new ResizeObserver(relayoutMasonry);
+    ro.observe($("#view-library")); ro.observe($("#view-liked"));
     // The prompt box floats over the grid; pad the grid so its last row can scroll clear of it
     new ResizeObserver(() => $("#feed").style.setProperty("--composer-h", $("#composer").offsetHeight + "px")).observe($("#composer"));
     new IntersectionObserver((ents) => {
