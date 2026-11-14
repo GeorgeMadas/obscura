@@ -1,0 +1,4 @@
+# Only the files the Dockerfile copies go into the build context, so app-code changes never bust the cache
+*
+!deploy/requirements.txt
+!deploy/install_comfyui.sh
