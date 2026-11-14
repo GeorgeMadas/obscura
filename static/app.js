@@ -19,6 +19,7 @@
   };
   const icon = (name, fill) => h("i", { class: `${fill ? "ph-fill" : "ph"} ph-${name}`, "aria-hidden": "true" });
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const touchFirst = matchMedia("(hover: none) and (pointer: coarse)").matches;
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem("obscura:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -1355,7 +1356,7 @@
     if (!Z.hinted) {
       Z.hinted = true;
       const badge = $("#lbZoom");
-      badge.textContent = "Scroll to zoom, drag to move";
+      badge.textContent = touchFirst ? "Pinch to zoom, swipe for the next one" : "Scroll to zoom, drag to move";
       badge.classList.add("show");
       setTimeout(() => { if (Z.s <= 1.001) badge.classList.remove("show"); }, 2600);
     }
@@ -1538,14 +1539,37 @@
       // Trackpad pinch arrives as ctrl+wheel with small deltas
       zoomAt(e.clientX, e.clientY, Z.s * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0018)), false);
     }, { passive: false });
+    // Two fingers on the stage: pinch zoom around their midpoint (single-finger drag is paused meanwhile)
+    const touches = new Map();
+    let pinch = null;
+    const pinchState = () => {
+      const [a, b] = [...touches.values()];
+      return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    };
     stage.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "touch" && !onVideo()) {
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size === 2) {
+          Z.drag = null; stage.classList.remove("dragging");
+          pinch = { ...pinchState(), s: Z.s };
+          stage.setPointerCapture(e.pointerId);
+          return;
+        }
+        if (touches.size > 2) return;
+      }
       if (e.button !== 0 || e.target.closest(".lb-nav")) return;
       if (onVideo()) { if (e.target === stage) closeLightbox(); return; }
       if (e.target.closest("#lbDivider, .lb-side")) return;
-      Z.drag = { x: e.clientX, y: e.clientY, tx: Z.tx, ty: Z.ty, moved: false, onImg: !!e.target.closest("#lbLayer"), id: e.pointerId };
+      Z.drag = { x: e.clientX, y: e.clientY, tx: Z.tx, ty: Z.ty, moved: false, onImg: !!e.target.closest("#lbLayer"), id: e.pointerId, t: performance.now() };
       stage.setPointerCapture(e.pointerId);
     });
     stage.addEventListener("pointermove", (e) => {
+      if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && touches.size === 2) {
+        const now = pinchState();
+        zoomAt(now.mx, now.my, pinch.s * (now.dist / pinch.dist), false);
+        return;
+      }
       const d = Z.drag;
       if (!d || d.id !== e.pointerId) return;
       const dx = e.clientX - d.x, dy = e.clientY - d.y;
@@ -1553,11 +1577,19 @@
       if (d.moved && Z.s > 1.001) { Z.tx = d.tx + dx; Z.ty = d.ty + dy; clampPan(); applyZoom(false); }
     });
     const end = (e) => {
+      touches.delete(e.pointerId);
+      if (pinch) { if (touches.size < 2) pinch = null; return; }
       const d = Z.drag;
       if (!d || d.id !== e.pointerId) return;
       Z.drag = null;
       stage.classList.remove("dragging");
-      if (d.moved || e.type === "pointercancel") return;
+      if (e.type === "pointercancel") return;
+      if (d.moved) {
+        // Quick horizontal swipe on an unzoomed image: previous / next
+        const dx = e.clientX - d.x, dy = e.clientY - d.y;
+        if (Z.s <= 1.001 && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && performance.now() - d.t < 600) lbStep(dx < 0 ? 1 : -1);
+        return;
+      }
       if (d.onImg) {
         if (Z.s > 1.001) zoomReset(true);
         else zoomAt(e.clientX, e.clientY, actualPixelsScale(), true);

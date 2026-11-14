@@ -1398,3 +1398,49 @@ select.input { appearance: none; -webkit-appearance: none; padding-right: 28px; 
 .wf-pick { position: relative; aspect-ratio: 1; border-radius: var(--r-sm); overflow: hidden; background: var(--bg-3); transition: transform 0.2s var(--ease), box-shadow 0.2s; }
 .wf-pick img { width: 100%; height: 100%; object-fit: cover; }
 .wf-pick:hover { transform: scale(1.03); box-shadow: 0 0 0 2px var(--accent); }
+
+/* =========================================================================
+   Phones (kept last so it wins over the component rules above)
+   ========================================================================= */
+@media (max-width: 767px) {
+  /* 16px stops iOS Safari from zooming the page when a field gets focus */
+  .composer textarea, .input, .search input, select, textarea { font-size: 16px; }
+
+  /* Composer: the prompt gets the full width, buttons sit on their own row below it */
+  .composer { padding: 10px 10px 10px 14px; }
+  .composer-row { flex-wrap: wrap; row-gap: 6px; }
+  .composer textarea { flex: 1 1 100%; padding: 4px 0; max-height: 34dvh; }
+  .composer-side { width: 100%; justify-content: flex-end; }
+  .composer-side .btn-primary { margin-left: auto; min-height: 40px; }
+  .composer-side .icon-btn { width: 40px; height: 40px; }
+  .refs { gap: 8px; padding-top: 2px; }
+  .ref-slot { width: 64px; height: 64px; }
+  .refs-note { flex: 1 1 100%; max-width: none; }
+
+  /* Workflows: list becomes a swipeable strip, the selected workflow gets the full width */
+  .wf-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .wf-list { position: static; flex-direction: row; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 16px;
+             margin: 0 -16px; padding: 0 16px 4px; scrollbar-width: none; }
+  .wf-list::-webkit-scrollbar { display: none; }
+  .wf-item { flex: none; width: min(260px, 78vw); scroll-snap-align: start; }
+  .wf-panel { padding: 16px; min-width: 0; }
+  .wf-panel-head { flex-wrap: wrap; gap: 8px; }
+  .wf-panel-head > :first-child { flex: 1 1 200px; min-width: 0; }
+  .wf-status { flex-wrap: wrap; }
+  .wf-stat { white-space: normal; min-width: 0; }
+  .wf-status-actions { margin-left: 0; width: 100%; }
+  .wf-status-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .wf-media { gap: 12px; }
+  .wf-media-field { flex: 1 1 100%; min-width: 0; }
+  .wf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
+  .wf-run-row .hint { min-width: 0; flex-basis: 100%; }
+  .wf-run { flex: 1 1 100%; }
+
+  /* Viewer: controls easier to hit with a thumb */
+  .lb-top .icon-btn { width: 40px; height: 40px; background: rgb(10 10 11 / 0.6); backdrop-filter: blur(10px); }
+}
+
+/* Touch screens have no hover, so controls that only appeared on hover stay visible */
+@media (hover: none) {
+  .ref-slot .remove, .wf-slot .remove { opacity: 1; width: 28px; height: 28px; }
+}
