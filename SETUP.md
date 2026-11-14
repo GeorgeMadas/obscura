@@ -28,6 +28,32 @@ Ground rules while doing this:
   no clicking Generate). The user does all testing. Verify with process/port/log checks only.
 - Don't touch the NVIDIA driver; don't change torch unless step 1's check fails.
 
+## Custom Docker image (fast boot)
+
+`Dockerfile` builds `ghcr.io/georgemadas/obscura:latest` on top of `vastai/pytorch:cuda-12.8.1-auto` with the
+slow installs already done: the step 3 packages and kernels, ComfyUI + node packs + `/venv/comfy` at
+`/opt/ComfyUI` (step 9), and Claude Code. `.github/workflows/docker-image.yml` rebuilds it on every push to
+`main` that touches `Dockerfile`, `deploy/requirements.txt` or `deploy/install_comfyui.sh` (or from the
+Actions tab, "Run workflow"). Rebuilds reuse cached layers, so only changed steps are redone.
+
+What stays out of the image:
+- **App code** — `deploy/provision.sh` clones the repo into `/workspace/qwen-image` on first boot, and on later
+  boots fast-forwards it to `main` *only if it has no uncommitted changes*. App changes need just a `git push`.
+- **Models (~155 GB)** — Qwen in `$HF_HOME=/workspace/.hf_home`, video models in `/workspace/models/comfyui`
+  (`/opt/ComfyUI/models` links there; ComfyUI input/output/user link to `/workspace/comfyui-data/`).
+  Prefetch skips files already present, so with a persistent volume they download only once.
+
+Pointing the Vast template at it:
+1. **Image:** `ghcr.io/georgemadas/obscura`, tag `latest`.
+2. **Registry login:** the package is private (it inherits the repo's visibility). In the template's
+   "Docker Repository Authentication" set server `ghcr.io`, username `GeorgeMadas`, and a GitHub token with
+   `read:packages` as the password. (Or make the package public under GitHub → Packages → obscura → settings.)
+3. **Persistent volume:** create a Vast volume (≥ 250 GB, same machine/region you rent in) and mount it at
+   `/workspace`. Without one everything still works; models just download again on each new instance.
+4. **On-start, ports, env:** unchanged — on-start still runs `deploy/provision.sh` from `main`, ports 10100 and
+   10200, `GITHUB_TOKEN` (and `HF_TOKEN` if used) in the Vast account env vars. On this image provision
+   finishes its installs in seconds and spends its time only on models that aren't on the volume yet.
+
 ---
 
 ## 0. Get the repo (bootstrap)
@@ -39,7 +65,7 @@ skip to step 1. Otherwise the user will have given you this command:
 git clone https://x-access-token:<GITHUB_TOKEN>@github.com/GeorgeMadas/obscura.git /workspace/qwen-image
 ```
 
-The token lives in `deploy/github.env` inside the repo once cloned.
+The token comes from `GITHUB_TOKEN` in the Vast account's environment variables (it is not kept in the repo).
 
 **Check:** `test -f /workspace/qwen-image/app.py && git -C /workspace/qwen-image log --oneline -1`
 
