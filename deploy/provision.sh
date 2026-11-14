@@ -2,12 +2,14 @@
 # Obscura / Qwen Image auto-provisioning for Vast.ai (implements SETUP.md steps 0-9 + Claude Code)
 # The Vast template's on-start downloads this file from main and runs it in the background, so
 # edits here apply to every NEW instance. Needs GITHUB_TOKEN in the Vast account env vars.
+# Works on both the plain vastai/pytorch image and the prebuilt ghcr.io/georgemadas/obscura image (Dockerfile):
+# on the prebuilt one the installs below are already satisfied and finish in seconds.
 # Log: /var/log/obscura-provision.log   Done marker: /workspace/.obscura-provisioned
 set -o pipefail
 log(){ echo "[obscura $(date +%T)] $*"; }
 APP=/workspace/qwen-image
 PY=/venv/main/bin/python
-export HF_HOME=/workspace/.hf_home HF_HUB_ENABLE_HF_TRANSFER=1
+export HF_HOME=/workspace/.hf_home HF_HUB_ENABLE_HF_TRANSFER=1 HF_XET_HIGH_PERFORMANCE=1
 export PATH="/root/.local/bin:$PATH" HOME=/root
 
 # On-start runs before the Vast entrypoint creates /workspace and starts supervisor; wait for both
@@ -20,6 +22,14 @@ if [ ! -f "$APP/app.py" ]; then
   [ -n "$GITHUB_TOKEN" ] || log "GITHUB_TOKEN not set - private repo clone will fail"
   git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/GeorgeMadas/obscura.git" "$APP" || { log "clone FAILED"; exit 1; }
   git -C "$APP" remote set-url origin https://github.com/GeorgeMadas/obscura.git
+elif [ -z "$(git -C "$APP" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  # Repo kept on a persistent volume: catch up with main, but only when nothing local would be touched
+  log "Updating repo (fast-forward only)"
+  git -C "$APP" -c safe.directory="$APP" -c credential.helper= \
+    pull -q --ff-only "https://x-access-token:${GITHUB_TOKEN}@github.com/GeorgeMadas/obscura.git" main \
+    || log "repo update skipped (not a fast-forward or no network)"
+else
+  log "Repo has uncommitted changes - leaving it as it is (commit and push them!)"
 fi
 
 # 2. Git identity (+ push credentials only if GITHUB_TOKEN is set in Vast account env)
@@ -72,6 +82,11 @@ cp "$APP/deploy/service/qwen-image.conf" /etc/supervisor/conf.d/qwen-image.conf
 supervisorctl reread && supervisorctl update
 
 # 9. ComfyUI (video workflows; editor on portal port 10200)
+# The prebuilt image has ComfyUI in /opt/ComfyUI with models/input/output/user linked onto /workspace
+if [ -d /opt/ComfyUI ]; then
+  mkdir -p /workspace/models/comfyui /workspace/comfyui-data/input /workspace/comfyui-data/output /workspace/comfyui-data/user
+  [ -e /workspace/ComfyUI ] || ln -s /opt/ComfyUI /workspace/ComfyUI
+fi
 bash "$APP/deploy/install_comfyui.sh" || log "ComfyUI install FAILED"
 
 touch /workspace/.obscura-provisioned
