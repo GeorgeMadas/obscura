@@ -9,4 +9,4 @@ metadata:
 
 **Why:** The user wants a second instance without Vast's copy feature; they dropped the Vast template approach.
 
-**How to apply:** When asked to set up a new instance, follow SETUP.md step by step. After app changes, commit and push so the other instance can pull. The GitHub token is in deploy/github.env (at the user's request). Related: [[no-test-generations]]
+**How to apply:** When asked to set up a new instance, follow SETUP.md step by step. After app changes, commit and push so the other instance can pull. The GitHub token comes from GITHUB_TOKEN in the Vast account env vars (no longer kept in deploy/github.env). New instances can use the prebuilt image ghcr.io/georgemadas/obscura (see SETUP.md "Custom Docker image"). Related: [[no-test-generations]]
