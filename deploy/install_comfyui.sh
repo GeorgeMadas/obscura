@@ -1,5 +1,7 @@
 #!/bin/bash
 # Install ComfyUI next to Obscura (SETUP.md step 9). Safe to rerun: every step skips work that is already done.
+# The Dockerfile runs this with COMFY_DIR=/opt/ComfyUI COMFY_BUILD_ONLY=1 (code + venv only, no services or models);
+# on that image provision.sh links /workspace/ComfyUI to /opt/ComfyUI, so the boot-time run finds everything in place.
 #   - /workspace/ComfyUI at a pinned commit, plus pinned custom node packs (list below)
 #   - its own venv /venv/comfy with the same torch build as /venv/main (cu128, needed for Blackwell)
 #   - supervisor service "comfyui" on 127.0.0.1:18188 and the portal entry "ComfyUI" (10200 -> 18188)
@@ -8,7 +10,7 @@
 set -eo pipefail
 log(){ echo "[comfyui $(date +%T)] $*"; }
 APP=/workspace/qwen-image
-COMFY=/workspace/ComfyUI
+COMFY=${COMFY_DIR:-/workspace/ComfyUI}
 VENV=/venv/comfy
 EXT_PORT=${COMFY_EXTERNAL_PORT:-10200}
 
@@ -31,7 +33,9 @@ clone_at() {  # url dir commit
   # A pack ComfyUI-Manager installed as a plain download (no .git) is left as it is
   if [ -d "$2" ] && [ ! -d "$2/.git" ]; then return; fi
   if [ ! -d "$2/.git" ]; then git clone -q "$1" "$2"; fi
-  git -C "$2" fetch -q origin && git -C "$2" checkout -q "$3"
+  # Only hit the network when the pinned commit isn't already there (the Docker image has them all)
+  git -C "$2" cat-file -e "$3^{commit}" 2>/dev/null || git -C "$2" fetch -q origin
+  git -C "$2" checkout -q "$3"
 }
 
 log "ComfyUI @ ${COMFY_COMMIT:0:8}"
@@ -57,6 +61,11 @@ for f in "$COMFY"/custom_nodes/*/requirements.txt; do reqs+=(-r "$f"); done
 # torch is already satisfied by the cu128 build above, so these requirements leave it alone
 uv pip install -q --python "$VENV/bin/python" "${reqs[@]}" websocket-client
 "$VENV/bin/python" -c 'import torch; print("comfy venv torch", torch.__version__, torch.cuda.is_available())'
+
+if [ "${COMFY_BUILD_ONLY:-0}" = 1 ]; then
+  log "Build-only mode: skipping service, portal entry and models"
+  exit 0
+fi
 
 log "Service files"
 cp "$APP/deploy/service/comfyui.sh" /opt/supervisor-scripts/comfyui.sh
