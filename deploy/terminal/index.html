@@ -81,6 +81,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .term-wrap { position: relative; flex: 1; min-height: 0; background: var(--black); touch-action: none; }
 #term { position: absolute; inset: 6px 4px 4px 8px; }
 #term .xterm { height: 100%; }
+/* Phones: a still layer over the terminal takes every touch. xterm redraws its rows while you drag, and a touch
+   whose element is removed stops reporting moves, so scrolling on the rows themselves died after one step. */
+.touch-layer { position: absolute; inset: 0; z-index: 2; display: none; touch-action: none; }
+@media (pointer: coarse) { .touch-layer { display: block; } }
 #term .xterm-viewport { overscroll-behavior: none; background: var(--black) !important; }
 .to-bottom {
   position: absolute; right: 12px; bottom: 12px; z-index: 5;
@@ -108,6 +112,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 
 .quick { padding: 8px 10px 2px; }
 #app.kb .quick { display: none; }
+#app.kb.termfocus .compose { display: none; }
 .qbtn {
   flex: none; height: 34px; padding: 0 13px; border-radius: 17px; border: 1px solid var(--line-2);
   background: transparent; color: var(--paper-2); font-size: 13px; white-space: nowrap; cursor: pointer; touch-action: pan-x;
@@ -131,12 +136,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 
 .keys { padding: 0 10px 8px; align-items: center; }
 .key {
-  flex: none; height: var(--key-h); min-width: 46px; padding: 0 11px; border-radius: 9px;
+  flex: none; height: var(--key-h); min-width: 44px; padding: 0 9px; border-radius: 9px;
   border: 1px solid var(--line-2); border-bottom-width: 2px; background: var(--tray-2); color: var(--paper);
   font: 500 14px/1 var(--mono); white-space: nowrap; cursor: pointer; touch-action: pan-x; user-select: none; -webkit-user-select: none;
 }
-.key.wide { min-width: 58px; }
-.key.arrow { min-width: 48px; font-size: 17px; }
+.key.wide { min-width: 56px; }
+.key.arrow { min-width: 44px; font-size: 17px; }
+/* a fade on the right edge says "there is more, swipe sideways" */
+.scroller.more { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
 .key.pressed { background: var(--line-2); transform: translateY(1px); }
 .key.mod.armed { border-color: var(--safelight); color: var(--safelight); background: var(--safelight-dim); }
 .key.mod.locked { border-color: var(--safelight); background: var(--safelight); color: #1a0d07; }
@@ -210,6 +217,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 
   <main class="term-wrap" id="termWrap">
     <div id="term"></div>
+    <div class="touch-layer" id="touchLayer" aria-hidden="true"></div>
     <button class="to-bottom" id="toBottom" type="button" hidden>
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v10M3.5 8.5 8 13l4.5-4.5"/></svg>
       Jump to bottom
@@ -220,7 +228,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   <div class="dock">
     <div class="quick scroller" id="quick" aria-label="Quick commands"></div>
     <form class="compose" id="compose" autocomplete="off">
-      <textarea id="composeText" rows="1" placeholder="Type or dictate, then Send" aria-label="Message to send to the terminal" enterkeyhint="enter" spellcheck="true"></textarea>
+      <textarea id="composeText" rows="1" placeholder="Type a message, then Send" aria-label="Message to send to the terminal" enterkeyhint="enter" spellcheck="true"></textarea>
       <button class="send" id="sendBtn" type="submit" disabled>Send</button>
     </form>
     <div class="keys scroller" id="keys" aria-label="Terminal keys"></div>
@@ -286,15 +294,27 @@ term.loadAddon(uni);
 term.unicode.activeVersion = "11";
 term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
 term.open($("term"));
-// Phones: the terminal itself never takes keyboard focus, so touching it (to scroll or read) does not pop up
-// the keyboard. Typing goes through the message box and the key bar; tapping the terminal just closes the keyboard.
+// Phones: only a deliberate tap on the terminal opens the keyboard (see the touch handler). Dragging to scroll,
+// pressing and holding, or anything else that happens to focus xterm's hidden input is undone at once.
+let termFocusOk = false;
+function focusTerm() {
+  const ta = term.textarea;
+  if (!ta) return;
+  termFocusOk = true;
+  ta.removeAttribute("inputmode");
+  ta.focus({ preventScroll: true });
+}
 if (coarse && term.textarea) {
   const ta = term.textarea;
   ta.setAttribute("inputmode", "none");
-  ta.setAttribute("tabindex", "-1");
-  ta.addEventListener("focus", () => ta.blur());
+  ta.setAttribute("autocapitalize", "off");
+  ta.setAttribute("autocorrect", "off");
+  ta.addEventListener("focus", () => { if (!termFocusOk) ta.blur(); });
+  ta.addEventListener("blur", () => { termFocusOk = false; ta.setAttribute("inputmode", "none"); });
 }
-try {
+// Phones use xterm's DOM renderer: with WebGL the glyphs could be drawn at the wrong pixel ratio, twice as
+// wide as the cells, so half of every line ran off the right edge.
+if (!coarse) try {
   const gl = new WebglAddon.WebglAddon();
   gl.onContextLoss(() => gl.dispose());
   term.loadAddon(gl);
@@ -382,17 +402,20 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ---------------------------------------------------------------- scrolling through tmux history
+// One step = two lines of tmux history, or one mouse-wheel notch for a fullscreen app like Claude Code
 const K_UP = "\x1b[97~", K_DOWN = "\x1b[98~", K_BOTTOM = "\x1b[99~";   // see tmux.conf
-let scrolled = 0;  // lines the tmux pane is scrolled up, as far as this page knows
+const STEP_LINES = 2, MAX_STEPS = 400;
+let scrolled = 0;  // steps scrolled up, as far as this page knows
 const toBottom = $("toBottom");
 function showToBottom() { toBottom.hidden = scrolled <= 0; }
 function scrollLines(n) {
   if (!n || !live()) return;
-  if (n > 0) { sendRaw(K_UP.repeat(n)); scrolled += n; }
+  if (n > 0) { n = Math.min(n, MAX_STEPS - scrolled); if (n > 0) { sendRaw(K_UP.repeat(n)); scrolled += n; } }
   else { const m = Math.min(-n, Math.max(scrolled, 0)); if (m) sendRaw(K_DOWN.repeat(m)); scrolled -= m; }
   showToBottom();
 }
-function jumpToBottom() { if (scrolled > 0) sendRaw(K_BOTTOM); scrolled = 0; showToBottom(); }
+// Scroll back down as far as we went up (a fullscreen app has no "cancel"), then leave tmux copy mode
+function jumpToBottom() { if (scrolled > 0) sendRaw(K_DOWN.repeat(scrolled) + K_BOTTOM); scrolled = 0; showToBottom(); }
 toBottom.addEventListener("click", () => { jumpToBottom(); if (!coarse) term.focus(); });
 
 // Everything typed goes through here: leave copy mode first, so keys reach the program, not the scrollback
@@ -402,25 +425,29 @@ function send(s) {
 }
 
 term.attachCustomWheelEventHandler(ev => {
-  const cell = cellHeight();
-  let lines = ev.deltaMode === 1 ? ev.deltaY : ev.deltaY / cell;
+  const cell = stepHeight();
+  let lines = ev.deltaMode === 1 ? ev.deltaY / STEP_LINES : ev.deltaY / cell;
   lines = Math.sign(lines) * Math.max(1, Math.round(Math.abs(lines)));
   scrollLines(-lines);
   ev.preventDefault();
   return false;
 });
 function cellHeight() { return Math.max(8, $("term").clientHeight / Math.max(1, term.rows)); }
+function stepHeight() { return cellHeight() * STEP_LINES; }
 
-// Touch: one finger drags through history (with momentum), two fingers pinch the font size.
-// A tap still lands on xterm and opens the keyboard.
+// Touch: drag up/down scrolls (with momentum), a quick tap opens the keyboard to type into the terminal,
+// two fingers pinch the font size.
 (() => {
   const wrap = $("termWrap");
-  let mode = "", y0 = 0, acc = 0, lastY = 0, lastT = 0, vel = 0, pinch0 = 0, font0 = 0, raf = 0;
+  let mode = "", x0 = 0, y0 = 0, t0 = 0, acc = 0, lastY = 0, lastT = 0, vel = 0, pinch0 = 0, font0 = 0, raf = 0;
   const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   wrap.addEventListener("touchstart", e => {
     cancelAnimationFrame(raf);
     if (e.touches.length === 2) { mode = "pinch"; pinch0 = dist(e.touches); font0 = fontSize; return; }
-    if (e.touches.length === 1) { mode = "maybe"; y0 = lastY = e.touches[0].clientY; lastT = e.timeStamp; acc = 0; vel = 0; }
+    if (e.touches.length === 1) {
+      if (e.target.closest && e.target.closest("button")) { mode = ""; return; }   // Jump to bottom
+      mode = "maybe"; x0 = e.touches[0].clientX; y0 = lastY = e.touches[0].clientY; t0 = lastT = e.timeStamp; acc = 0; vel = 0;
+    }
   }, { passive: true, capture: true });
   wrap.addEventListener("touchmove", e => {
     if (mode === "pinch" && e.touches.length === 2) {
@@ -430,17 +457,21 @@ function cellHeight() { return Math.max(8, $("term").clientHeight / Math.max(1, 
     }
     if (e.touches.length !== 1 || !mode) return;
     const y = e.touches[0].clientY;
-    if (mode === "maybe" && Math.abs(y - y0) > 8) mode = "scroll";
-    if (mode !== "scroll") return;
+    if (mode === "maybe") {
+      if (Math.abs(y - y0) > 8) mode = "scroll";
+      else if (Math.abs(e.touches[0].clientX - x0) > 12) mode = "other";
+    }
+    if (mode !== "scroll") { if (mode === "maybe") e.preventDefault(); return; }
     e.preventDefault(); e.stopPropagation();
     const dy = y - lastY, dt = Math.max(1, e.timeStamp - lastT);
     vel = 0.8 * (dy / dt) + 0.2 * vel;
     lastY = y; lastT = e.timeStamp;
     acc += dy;
-    const cell = cellHeight(), n = Math.trunc(acc / cell);
+    const cell = stepHeight(), n = Math.trunc(acc / cell);
     if (n) { acc -= n * cell; scrollLines(n); }
   }, { passive: false, capture: true });
   const end = e => {
+    if (!mode) return;
     if (mode === "pinch") { if (e.touches.length < 2) { store.set("wt.font", fontSize); mode = ""; } return; }
     if (mode === "scroll") {
       e.preventDefault();
@@ -448,11 +479,18 @@ function cellHeight() { return Math.max(8, $("term").clientHeight / Math.max(1, 
       let v = vel * 16, a = 0;
       const step = () => {
         v *= 0.93; a += v;
-        const cell = cellHeight(), n = Math.trunc(a / cell);
+        const cell = stepHeight(), n = Math.trunc(a / cell);
         if (n) { a -= n * cell; scrollLines(n); }
         if (Math.abs(v) > 0.6 && !(v < 0 && scrolled <= 0)) raf = requestAnimationFrame(step);
       };
       if (Math.abs(v) > 2) raf = requestAnimationFrame(step);
+    } else if (mode === "maybe" && e.type === "touchend" && e.timeStamp - t0 < 450) {
+      // a tap: type straight into the terminal
+      if (e.cancelable) e.preventDefault();
+      focusTerm();
+      if (scrolled > 0) jumpToBottom();
+    } else if (e.cancelable) {
+      e.preventDefault();   // press-and-hold or sideways drag: no keyboard
     }
     mode = "";
   };
@@ -510,20 +548,21 @@ term.onData(d => {
   send(d);
 });
 
+// Ordered for Claude Code: the keys it needs most come first, so they are on screen without sideways scrolling
 const KEYS = [
-  { l: "Esc", s: "\x1b", a: "Escape", cls: "wide" },
-  { l: "⇧Tab", s: "\x1b[Z", a: "Shift Tab", cls: "wide" },
-  { l: "Tab", s: "\t", a: "Tab", cls: "wide" },
+  { l: "Esc", s: "\x1b", a: "Escape" },
+  { l: "↑", k: "up", a: "Up", cls: "arrow", rep: 1 },
+  { l: "↓", k: "down", a: "Down", cls: "arrow", rep: 1 },
+  { l: "Enter", s: "\r", a: "Enter", cls: "wide" },
+  { l: "⇧Tab", s: "\x1b[Z", a: "Shift Tab" },
+  { l: "^C", s: "\x03", a: "Control C", cls: "combo" },
+  "gap",
+  { l: "←", k: "left", a: "Left", cls: "arrow", rep: 1 },
+  { l: "→", k: "right", a: "Right", cls: "arrow", rep: 1 },
+  { l: "Tab", s: "\t", a: "Tab" },
   { l: "Ctrl", mod: "ctrl", a: "Control, sticky", cls: "wide" },
   { l: "Alt", mod: "alt", a: "Alt, sticky", cls: "wide" },
   "gap",
-  { l: "←", k: "left", a: "Left", cls: "arrow", rep: 1 },
-  { l: "↑", k: "up", a: "Up", cls: "arrow", rep: 1 },
-  { l: "↓", k: "down", a: "Down", cls: "arrow", rep: 1 },
-  { l: "→", k: "right", a: "Right", cls: "arrow", rep: 1 },
-  { l: "Enter", s: "\r", a: "Enter", cls: "wide" },
-  "gap",
-  { l: "^C", s: "\x03", a: "Control C", cls: "combo" },
   { l: "^D", s: "\x04", a: "Control D", cls: "combo" },
   { l: "^R", s: "\x12", a: "Control R", cls: "combo" },
   { l: "^L", s: "\x0c", a: "Control L", cls: "combo" },
@@ -853,8 +892,24 @@ addEventListener("resize", () => { if (innerWidth !== baseW) { baseW = innerWidt
 new ResizeObserver(refit).observe($("term"));
 layout();
 
+// fade the edge of a sideways row while there is more of it to see
+function markMore(el) { el.classList.toggle("more", el.scrollLeft + el.clientWidth < el.scrollWidth - 4); }
+for (const el of document.querySelectorAll(".scroller")) {
+  el.addEventListener("scroll", () => markMore(el), { passive: true });
+  new ResizeObserver(() => markMore(el)).observe(el);
+  new MutationObserver(() => markMore(el)).observe(el, { childList: true });
+}
+if (term.textarea) {
+  term.textarea.addEventListener("focus", () => app.classList.add("termfocus"));
+  term.textarea.addEventListener("blur", () => app.classList.remove("termfocus"));
+}
+
 connect();
 if (!coarse) term.focus();
+if (coarse && !store.get("wt.hint1", false)) {
+  setTimeout(() => notice("Drag the terminal to scroll. Tap it to type."), 1200);
+  store.set("wt.hint1", true);
+}
 
 // For tests and debugging from the console
 window.wt = { term, send, typeText, keySeq, mods, get scrolled() { return scrolled; } };
