@@ -286,6 +286,14 @@ term.loadAddon(uni);
 term.unicode.activeVersion = "11";
 term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
 term.open($("term"));
+// Phones: the terminal itself never takes keyboard focus, so touching it (to scroll or read) does not pop up
+// the keyboard. Typing goes through the message box and the key bar; tapping the terminal just closes the keyboard.
+if (coarse && term.textarea) {
+  const ta = term.textarea;
+  ta.setAttribute("inputmode", "none");
+  ta.setAttribute("tabindex", "-1");
+  ta.addEventListener("focus", () => ta.blur());
+}
 try {
   const gl = new WebglAddon.WebglAddon();
   gl.onContextLoss(() => gl.dispose());
