@@ -289,11 +289,19 @@ term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => window.open(uri, "_bl
 term.open($("term"));
 // Phones: only a deliberate tap on the terminal opens the keyboard (see the touch handler). Dragging to scroll,
 // pressing and holding, or anything else that happens to focus xterm's hidden input is undone at once.
-let termFocusOk = false;
+let termFocusOk = false, kbAskedAt = 0;
+function hideTermKeyboard() {
+  const ta = term.textarea;
+  termFocusOk = false;
+  if (!ta) return;
+  if (coarse) ta.setAttribute("inputmode", "none");
+  ta.blur();
+}
 function focusTerm() {
   const ta = term.textarea;
   if (!ta) return;
   termFocusOk = true;
+  kbAskedAt = Date.now();
   ta.removeAttribute("inputmode");
   ta.focus({ preventScroll: true });
 }
@@ -302,8 +310,9 @@ if (coarse && term.textarea) {
   ta.setAttribute("inputmode", "none");
   ta.setAttribute("autocapitalize", "off");
   ta.setAttribute("autocorrect", "off");
+  // Keyboards blur and refocus the input on their own (switching to voice typing, the clipboard panel...),
+  // so a blur does not end "keyboard wanted"; only hideTermKeyboard() does
   ta.addEventListener("focus", () => { if (!termFocusOk) ta.blur(); });
-  ta.addEventListener("blur", () => { termFocusOk = false; ta.setAttribute("inputmode", "none"); });
 }
 // Phones use xterm's DOM renderer: with WebGL the glyphs could be drawn at the wrong pixel ratio, twice as
 // wide as the cells, so half of every line ran off the right edge.
@@ -407,8 +416,8 @@ function scrollLines(n) {
   else { const m = Math.min(-n, Math.max(scrolled, 0)); if (m) sendRaw(K_DOWN.repeat(m)); scrolled -= m; }
   showToBottom();
 }
-// Scroll back down as far as we went up (a fullscreen app has no "cancel"), then leave tmux copy mode
-function jumpToBottom() { if (scrolled > 0) sendRaw(K_DOWN.repeat(scrolled) + K_BOTTOM); scrolled = 0; showToBottom(); }
+// tmux.conf turns this into Ctrl+End for Claude Code (its "scroll to bottom") or leaves copy mode in a shell
+function jumpToBottom() { if (scrolled > 0) sendRaw(K_BOTTOM); scrolled = 0; showToBottom(); }
 toBottom.addEventListener("click", () => { jumpToBottom(); if (!coarse) term.focus(); });
 
 // Everything typed goes through here: leave copy mode first, so keys reach the program, not the scrollback
@@ -438,7 +447,7 @@ function layerSelection() {
 }
 (() => {
   const wrap = $("termWrap");
-  let mode = "", x0 = 0, y0 = 0, t0 = 0, acc = 0, lastY = 0, lastT = 0, vel = 0, pinch0 = 0, font0 = 0, raf = 0;
+  let holdT = 0, mode = "", x0 = 0, y0 = 0, t0 = 0, acc = 0, lastY = 0, lastT = 0, vel = 0, pinch0 = 0, font0 = 0, raf = 0;
   const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   wrap.addEventListener("touchstart", e => {
     cancelAnimationFrame(raf);
@@ -447,6 +456,8 @@ function layerSelection() {
     if (e.touches.length === 1) {
       if (e.target.closest && e.target.closest("button")) { mode = ""; return; }   // Jump to bottom
       mode = "maybe"; x0 = e.touches[0].clientX; y0 = lastY = e.touches[0].clientY; t0 = lastT = e.timeStamp; acc = 0; vel = 0;
+      clearTimeout(holdT);
+      holdT = setTimeout(() => { if (mode === "maybe") mode = "hold"; }, 420);
     }
   }, { passive: true, capture: true });
   wrap.addEventListener("touchmove", e => {
@@ -455,7 +466,7 @@ function layerSelection() {
       setFont(font0 * dist(e.touches) / pinch0, false);
       return;
     }
-    if (e.touches.length !== 1 || !mode) return;
+    if (e.touches.length !== 1 || !mode || mode === "hold") return;
     const y = e.touches[0].clientY;
     if (mode === "maybe") {
       if (Math.abs(y - y0) > 8) mode = "scroll";
@@ -471,6 +482,7 @@ function layerSelection() {
     if (n) { acc -= n * cell; scrollLines(n); }
   }, { passive: false, capture: true });
   const end = e => {
+    clearTimeout(holdT);
     if (!e.touches.length) { touching = false; setTimeout(updateMirror, 0); }
     if (!mode) return;
     if (mode === "pinch") { if (e.touches.length < 2) { store.set("wt.font", fontSize); mode = ""; } return; }
@@ -889,7 +901,7 @@ renderQuick();
 
 // ---------------------------------------------------------------- layout: keyboard and rotation
 const app = $("app");
-let baseH = innerHeight, baseW = innerWidth, wasKb = false;
+let baseH = innerHeight, baseW = innerWidth, kbGoneT = 0;
 function layout() {
   const vv = window.visualViewport;
   const h = vv ? vv.height : innerHeight;
@@ -897,11 +909,18 @@ function layout() {
   app.style.height = h + "px";
   app.style.transform = vv && vv.offsetTop ? `translateY(${vv.offsetTop}px)` : "";
   // keyboard open: the visible area is much shorter than the window
-  const kb = coarse && baseH - h > 120;
+  const kb = coarse && baseH - h > 80;
   // The keyboard was closed with the phone's back button or its own hide key: drop focus too, so a later tap
-  // on a key (Esc, arrows...) cannot bring it back up
-  if (wasKb && !kb && document.activeElement === term.textarea) term.textarea.blur();
-  wasKb = kb;
+  // on a key (Esc, arrows...) cannot bring it back. Only once the screen is back to full height and has
+  // stayed there: switching to voice typing or the clipboard resizes the keyboard for a moment.
+  clearTimeout(kbGoneT);
+  if (coarse && baseH - h < 40 && document.activeElement === term.textarea) {
+    kbGoneT = setTimeout(() => {
+      const vh = window.visualViewport ? visualViewport.height : innerHeight;
+      if (Date.now() - kbAskedAt < 1500) return;
+      if (baseH - vh < 40 && document.activeElement === term.textarea) { hideTermKeyboard(); renderKbd(); }
+    }, 900);
+  }
   app.classList.toggle("kb", kb);
   refit();
   queueMirror();
@@ -925,7 +944,7 @@ function renderKbd() {
   kbdBtn.textContent = on ? "Hide keyboard" : "Keyboard";
 }
 onTap(kbdBtn, () => {
-  if (document.activeElement === term.textarea) term.textarea.blur(); else focusTerm();
+  if (document.activeElement === term.textarea) hideTermKeyboard(); else focusTerm();
   renderKbd();
 });
 
