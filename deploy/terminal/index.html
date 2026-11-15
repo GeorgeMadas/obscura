@@ -75,7 +75,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   background: var(--tray); color: var(--paper-2); font-size: 13px; font-weight: 500; cursor: pointer;
 }
 .tool:active { background: var(--tray-2); color: var(--paper); }
-.tool.font { font-family: var(--mono); padding: 0 8px; }
+.tool.kbd { display: none; min-width: 44px; padding: 0 12px; }
+.tool.kbd.on { border-color: rgba(255,106,61,.5); color: var(--safelight); background: var(--safelight-dim); }
+@media (pointer: coarse) { .tool.desk { display: none; } .tool.kbd { display: inline-block; } }
 
 /* ---------- terminal */
 .term-wrap { position: relative; flex: 1; min-height: 0; background: var(--black); touch-action: none; }
@@ -83,7 +85,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 #term .xterm { height: 100%; }
 /* Phones: a still layer over the terminal takes every touch. xterm redraws its rows while you drag, and a touch
    whose element is removed stops reporting moves, so scrolling on the rows themselves died after one step. */
-.touch-layer { position: absolute; inset: 0; z-index: 2; display: none; touch-action: none; }
+.touch-layer {
+  position: absolute; inset: 0; z-index: 2; display: none; touch-action: none; overflow: hidden;
+  /* It also holds an invisible copy of the screen text, lined up with the terminal's cells, so press-and-hold
+     selects real text and the phone's own Copy menu works */
+  color: transparent; white-space: pre; user-select: text; -webkit-user-select: text; -webkit-touch-callout: default;
+}
+.touch-layer .mirror { position: absolute; left: 0; top: 0; }
+.touch-layer .mirror div { overflow: hidden; }
+.touch-layer ::selection { background: rgba(255,106,61,.42); color: transparent; }
 @media (pointer: coarse) { .touch-layer { display: block; } }
 #term .xterm-viewport { overscroll-behavior: none; background: var(--black) !important; }
 .to-bottom {
@@ -101,7 +111,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .notice.show { opacity: 1; }
 
-/* ---------- bottom stack: quick commands, compose box, key bar */
+/* ---------- bottom stack: quick commands, key pad */
 .dock { flex: none; background: var(--tray); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
 #app.kb .dock { padding-bottom: 0; }
 .scroller {
@@ -109,10 +119,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
 }
 .scroller::-webkit-scrollbar { display: none; }
+/* a fade on the right edge says "there is more, swipe sideways" */
+.scroller.more { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
 
 .quick { padding: 8px 10px 2px; }
 #app.kb .quick { display: none; }
-#app.kb.termfocus .compose { display: none; }
 .qbtn {
   flex: none; height: 34px; padding: 0 13px; border-radius: 17px; border: 1px solid var(--line-2);
   background: transparent; color: var(--paper-2); font-size: 13px; white-space: nowrap; cursor: pointer; touch-action: pan-x;
@@ -121,34 +132,22 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .qbtn:active { background: var(--tray-2); color: var(--paper); }
 .qbtn.edit { color: var(--muted); border-style: dashed; }
 
-.compose { display: flex; align-items: flex-end; gap: 8px; padding: 8px 10px; }
-.compose textarea {
-  flex: 1; min-width: 0; resize: none; max-height: 132px; min-height: 40px; padding: 9px 12px;
-  border-radius: 12px; border: 1px solid var(--line-2); background: var(--black); color: var(--paper);
-  font: 16px/1.35 var(--sans);  /* 16px keeps iOS from zooming in on focus */
-}
-.compose textarea::placeholder { color: var(--faint); }
-.send {
-  flex: none; height: 40px; padding: 0 16px; border-radius: 12px; border: 0;
-  background: var(--safelight); color: #1a0d07; font-weight: 600; font-size: 14px; cursor: pointer;
-}
-.send:disabled { background: var(--line-2); color: var(--muted); cursor: default; }
-
-.keys { padding: 0 10px 8px; align-items: center; }
+/* Key pad: two rows that fit the screen, no sideways scrolling. Arrows sit like a keyboard's arrow block. */
+.keys { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; padding: 8px 8px 8px; }
 .key {
-  flex: none; height: var(--key-h); min-width: 44px; padding: 0 9px; border-radius: 9px;
+  height: var(--key-h); min-width: 0; padding: 0 2px; border-radius: 9px;
   border: 1px solid var(--line-2); border-bottom-width: 2px; background: var(--tray-2); color: var(--paper);
-  font: 500 14px/1 var(--mono); white-space: nowrap; cursor: pointer; touch-action: pan-x; user-select: none; -webkit-user-select: none;
+  font: 500 14px/1 var(--mono); white-space: nowrap; overflow: hidden; cursor: pointer;
+  touch-action: manipulation; user-select: none; -webkit-user-select: none;
 }
-.key.wide { min-width: 56px; }
-.key.arrow { min-width: 44px; font-size: 17px; }
-/* a fade on the right edge says "there is more, swipe sideways" */
-.scroller.more { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
+.key.arrow { font-size: 18px; }
+.key.enter { background: #2a1d16; border-color: rgba(255,106,61,.4); color: var(--safelight); }
 .key.pressed { background: var(--line-2); transform: translateY(1px); }
 .key.mod.armed { border-color: var(--safelight); color: var(--safelight); background: var(--safelight-dim); }
 .key.mod.locked { border-color: var(--safelight); background: var(--safelight); color: #1a0d07; }
 .key.combo { color: var(--paper-2); }
-.gap { flex: none; width: 8px; }
+#app.kb { --key-h: 38px; }
+#app.kb .keys { padding-top: 6px; padding-bottom: 6px; gap: 5px; }
 
 /* ---------- sheets (copy, quick-command editor) */
 .scrim { position: fixed; inset: 0; z-index: 20; background: rgba(5,4,3,.62); display: flex; align-items: flex-end; justify-content: center; }
@@ -189,14 +188,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .qform .hint { color: var(--muted); font-size: 12.5px; }
 .confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; color: var(--paper-2); font-size: 13.5px; }
 
-@media (max-width: 520px) { .title { visibility: hidden; } }
 .compose textarea:focus-visible { outline: none; border-color: rgba(255,106,61,.6); }
 @media (min-width: 900px) {
-  .quick, .compose, .keys { padding-left: 14px; padding-right: 14px; }
+  .quick { padding-left: 14px; padding-right: 14px; }
+  .keys { max-width: 640px; margin: 0 auto; }
 }
 @media (pointer: fine) {
   :root { --key-h: 36px; }
-  .key { min-width: 40px; font-size: 13px; }
+  .key { font-size: 13px; }
   .qbtn { height: 30px; }
 }
 @media (prefers-reduced-motion: reduce) { .conn.connecting i { animation: none; } .notice { transition: none; } }
@@ -208,10 +207,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
     <button class="conn connecting" id="conn" type="button" aria-live="polite"><i></i><span>Connecting</span></button>
     <div class="title" id="title">tmux session main</div>
     <div class="tools">
-      <button class="tool font" id="fontDown" type="button" aria-label="Smaller text">A−</button>
-      <button class="tool font" id="fontUp" type="button" aria-label="Larger text">A+</button>
-      <button class="tool" id="copyBtn" type="button">Copy</button>
-      <button class="tool" id="pasteBtn" type="button">Paste</button>
+      <button class="tool desk" id="copyBtn" type="button">Copy</button>
+      <button class="tool kbd" id="kbdBtn" type="button" aria-pressed="false">Keyboard</button>
     </div>
   </header>
 
@@ -227,11 +224,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 
   <div class="dock">
     <div class="quick scroller" id="quick" aria-label="Quick commands"></div>
-    <form class="compose" id="compose" autocomplete="off">
-      <textarea id="composeText" rows="1" placeholder="Type a message, then Send" aria-label="Message to send to the terminal" enterkeyhint="enter" spellcheck="true"></textarea>
-      <button class="send" id="sendBtn" type="submit" disabled>Send</button>
-    </form>
-    <div class="keys scroller" id="keys" aria-label="Terminal keys"></div>
+    <div class="keys" id="keys" aria-label="Terminal keys"></div>
   </div>
 </div>
 
@@ -436,13 +429,20 @@ function cellHeight() { return Math.max(8, $("term").clientHeight / Math.max(1, 
 function stepHeight() { return cellHeight() * STEP_LINES; }
 
 // Touch: drag up/down scrolls (with momentum), a quick tap opens the keyboard to type into the terminal,
-// two fingers pinch the font size.
+// press and hold selects text (the phone's own selection handles and Copy menu), two fingers pinch the font size.
+let touching = false;
+const layer = $("touchLayer");
+function layerSelection() {
+  const sel = getSelection();
+  return sel && !sel.isCollapsed && sel.anchorNode && layer.contains(sel.anchorNode) ? sel : null;
+}
 (() => {
   const wrap = $("termWrap");
   let mode = "", x0 = 0, y0 = 0, t0 = 0, acc = 0, lastY = 0, lastT = 0, vel = 0, pinch0 = 0, font0 = 0, raf = 0;
   const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   wrap.addEventListener("touchstart", e => {
     cancelAnimationFrame(raf);
+    touching = true;
     if (e.touches.length === 2) { mode = "pinch"; pinch0 = dist(e.touches); font0 = fontSize; return; }
     if (e.touches.length === 1) {
       if (e.target.closest && e.target.closest("button")) { mode = ""; return; }   // Jump to bottom
@@ -471,6 +471,7 @@ function stepHeight() { return cellHeight() * STEP_LINES; }
     if (n) { acc -= n * cell; scrollLines(n); }
   }, { passive: false, capture: true });
   const end = e => {
+    if (!e.touches.length) { touching = false; setTimeout(updateMirror, 0); }
     if (!mode) return;
     if (mode === "pinch") { if (e.touches.length < 2) { store.set("wt.font", fontSize); mode = ""; } return; }
     if (mode === "scroll") {
@@ -485,19 +486,85 @@ function stepHeight() { return cellHeight() * STEP_LINES; }
       };
       if (Math.abs(v) > 2) raf = requestAnimationFrame(step);
     } else if (mode === "maybe" && e.type === "touchend" && e.timeStamp - t0 < 450) {
-      // a tap: type straight into the terminal
       if (e.cancelable) e.preventDefault();
-      focusTerm();
-      if (scrolled > 0) jumpToBottom();
-    } else if (e.cancelable) {
-      e.preventDefault();   // press-and-hold or sideways drag: no keyboard
+      const sel = layerSelection();
+      if (sel) { sel.removeAllRanges(); updateMirror(); }   // a tap first just drops a text selection
+      else { focusTerm(); if (scrolled > 0) jumpToBottom(); }   // a tap: type straight into the terminal
+    } else if (mode === "other" && e.cancelable) {
+      e.preventDefault();   // sideways drag: nothing
     }
+    // press and hold: left to the browser, which selects the word and shows its Copy menu
     mode = "";
   };
   wrap.addEventListener("touchend", end, { capture: true });
   wrap.addEventListener("touchcancel", end, { capture: true });
   document.addEventListener("gesturestart", e => e.preventDefault());   // iOS page zoom
 })();
+
+// ---------------------------------------------------------------- selectable screen text (phones)
+// The touch layer holds an invisible copy of the visible rows, one div per row, sized to the terminal's
+// cells, so a press and hold selects the text under the finger. It is not rewritten while a finger is down
+// or while a selection is showing, so the selection stays put.
+const mirror = document.createElement("div");
+mirror.className = "mirror";
+layer.append(mirror);
+let mirrorQueued = false;
+function updateMirror() {
+  mirrorQueued = false;
+  if (!coarse || touching || layerSelection()) return;
+  const dims = term._core && term._core._renderService && term._core._renderService.dimensions;
+  const cell = dims && dims.css && dims.css.cell;
+  const screen = document.querySelector("#term .xterm-screen");
+  if (!cell || !cell.width || !screen) return;
+  const wr = $("termWrap").getBoundingClientRect(), sr = screen.getBoundingClientRect();
+  // copy the text metrics of xterm's own rows, so the copy lines up with what is drawn
+  // (xterm's DOM renderer tightens runs of letters with letter-spacing but leaves runs of spaces alone)
+  const rowsEl = screen.querySelector(".xterm-rows");
+  const cs = rowsEl && getComputedStyle(rowsEl);
+  const lettered = rowsEl && rowsEl.querySelector("span[style*='letter-spacing']");
+  const ls = lettered ? lettered.style.letterSpacing : "0px";
+  Object.assign(mirror.style, {
+    left: sr.left - wr.left + "px", top: sr.top - wr.top + "px", width: sr.width + "px",
+    fontFamily: cs ? cs.fontFamily : term.options.fontFamily, fontSize: term.options.fontSize + "px",
+    lineHeight: cell.height + "px", fontKerning: "none",
+  });
+  const b = term.buffer.active, rows = [];
+  for (let y = b.viewportY; y < b.viewportY + term.rows; y++) {
+    const line = b.getLine(y);
+    let text = "";
+    if (line) for (let x = 0; x < line.length; x++) {
+      const c = line.getCell(x);
+      if (!c) break;
+      const w = c.getWidth();
+      if (w === 0) continue;                       // second half of a wide character
+      text += w === 2 ? " " + " " : (c.getChars() || " ");   // wide characters are blanked to keep columns lined up
+    }
+    rows.push(text.replace(/\s+$/, ""));
+  }
+  if (mirror.childElementCount !== rows.length) {
+    mirror.textContent = "";
+    for (let i = 0; i < rows.length; i++) mirror.append(document.createElement("div"));
+  }
+  rows.forEach((t, i) => {
+    const d = mirror.children[i];
+    d.style.height = cell.height + "px";
+    if (d.dataset.t === t && d.dataset.ls === ls) return;
+    d.dataset.t = t; d.dataset.ls = ls;
+    d.textContent = "";
+    for (const run of t.match(/ +|[^ ]+/g) || []) {
+      const sp = document.createElement("span");
+      sp.textContent = run;
+      if (run[0] !== " ") sp.style.letterSpacing = ls;
+      d.append(sp);
+    }
+  });
+}
+function queueMirror() { if (!mirrorQueued) { mirrorQueued = true; requestAnimationFrame(updateMirror); } }
+if (coarse) {
+  term.onRender(queueMirror);
+  term.onResize(queueMirror);
+  document.addEventListener("selectionchange", () => { if (!layerSelection()) queueMirror(); });
+}
 
 // ---------------------------------------------------------------- keys and sticky modifiers
 const mods = { ctrl: 0, alt: 0 };   // 0 off, 1 next key only, 2 locked
@@ -548,31 +615,24 @@ term.onData(d => {
   send(d);
 });
 
-// Ordered for Claude Code: the keys it needs most come first, so they are on screen without sideways scrolling
+// Two rows of seven, all on screen. Ctrl and Alt are sticky: tap one, then a key here or on the phone keyboard.
+//   Esc  Tab  ⇧Tab  Ctrl  Alt   ↑   Enter
+//   ^C   ^R   Home  End   ←     ↓   →
 const KEYS = [
   { l: "Esc", s: "\x1b", a: "Escape" },
-  { l: "↑", k: "up", a: "Up", cls: "arrow", rep: 1 },
-  { l: "↓", k: "down", a: "Down", cls: "arrow", rep: 1 },
-  { l: "Enter", s: "\r", a: "Enter", cls: "wide" },
-  { l: "⇧Tab", s: "\x1b[Z", a: "Shift Tab" },
-  { l: "^C", s: "\x03", a: "Control C", cls: "combo" },
-  "gap",
-  { l: "←", k: "left", a: "Left", cls: "arrow", rep: 1 },
-  { l: "→", k: "right", a: "Right", cls: "arrow", rep: 1 },
   { l: "Tab", s: "\t", a: "Tab" },
-  { l: "Ctrl", mod: "ctrl", a: "Control, sticky", cls: "wide" },
-  { l: "Alt", mod: "alt", a: "Alt, sticky", cls: "wide" },
-  "gap",
-  { l: "^D", s: "\x04", a: "Control D", cls: "combo" },
+  { l: "⇧Tab", s: "\x1b[Z", a: "Shift Tab" },
+  { l: "Ctrl", mod: "ctrl", a: "Control, sticky" },
+  { l: "Alt", mod: "alt", a: "Alt, sticky" },
+  { l: "↑", k: "up", a: "Up", cls: "arrow", rep: 1 },
+  { l: "Enter", s: "\r", a: "Enter", cls: "enter" },
+  { l: "^C", s: "\x03", a: "Control C", cls: "combo" },
   { l: "^R", s: "\x12", a: "Control R", cls: "combo" },
-  { l: "^L", s: "\x0c", a: "Control L", cls: "combo" },
-  "gap",
   { l: "Home", k: "home", a: "Home" },
   { l: "End", k: "end", a: "End" },
-  { l: "PgUp", k: "pgup", a: "Page up", rep: 1 },
-  { l: "PgDn", k: "pgdn", a: "Page down", rep: 1 },
-  { l: "◂ Word", s: "\x1bb", a: "Word left", rep: 1 },
-  { l: "Word ▸", s: "\x1bf", a: "Word right", rep: 1 },
+  { l: "←", k: "left", a: "Left", cls: "arrow", rep: 1 },
+  { l: "↓", k: "down", a: "Down", cls: "arrow", rep: 1 },
+  { l: "→", k: "right", a: "Right", cls: "arrow", rep: 1 },
 ];
 
 // Tap handling that never steals focus (so the phone keyboard stays open) and lets the row scroll sideways.
@@ -608,7 +668,10 @@ for (const k of KEYS) {
   if (k.mod) {
     modEls[k.mod] = b;
     b.title = "Tap: next key only. Tap twice: stays on.";
-    onTap(b, () => { mods[k.mod] = (mods[k.mod] + 1) % 3; renderMods(); });
+    onTap(b, () => {
+      mods[k.mod] = (mods[k.mod] + 1) % 3; renderMods();
+      if (coarse && mods[k.mod] === 1 && document.activeElement !== term.textarea) focusTerm();
+    });
   } else {
     onTap(b, () => {
       const m = useMods();
@@ -619,17 +682,7 @@ for (const k of KEYS) {
 }
 renderMods();
 
-// ---------------------------------------------------------------- compose box
-const box = $("composeText"), sendBtn = $("sendBtn");
-function growBox() {
-  box.style.height = "auto";
-  box.style.height = Math.min(box.scrollHeight + 2, 132) + "px";
-  sendBtn.disabled = !box.value.trim();
-}
-box.addEventListener("input", () => { growBox(); store.set("wt.draft", box.value); });
-box.value = store.get("wt.draft", "");
-growBox();
-
+// ---------------------------------------------------------------- typing text (quick buttons)
 // Type text into the terminal, then optionally press Enter. Multi-line text goes in as one bracketed
 // paste, so Claude Code takes it as a single message instead of submitting each line.
 function typeText(text, enter) {
@@ -646,28 +699,12 @@ function typeText(text, enter) {
   if (enter) setTimeout(() => sendRaw("\r"), 70);
   return true;
 }
-$("compose").addEventListener("submit", e => {
-  e.preventDefault();
-  if (!box.value.trim()) return;
-  if (typeText(box.value, true)) {
-    box.value = ""; store.set("wt.draft", ""); growBox();
-  }
-});
-box.addEventListener("keydown", e => {
-  // Desktop: Enter sends, Shift+Enter is a new line. Phones keep Enter as a new line.
-  if (e.key === "Enter" && !e.isComposing && (!coarse && !e.shiftKey || e.metaKey || e.ctrlKey)) {
-    e.preventDefault(); $("compose").requestSubmit();
-  }
-});
-onTap(sendBtn, () => $("compose").requestSubmit());
-sendBtn.addEventListener("click", e => e.preventDefault());
-
 // ---------------------------------------------------------------- notices, copy, paste
 let noticeT = 0;
-function notice(msg) {
+function notice(msg, ms = 2600) {
   const n = $("notice");
   n.textContent = msg; n.classList.add("show");
-  clearTimeout(noticeT); noticeT = setTimeout(() => n.classList.remove("show"), 2600);
+  clearTimeout(noticeT); noticeT = setTimeout(() => n.classList.remove("show"), ms);
 }
 async function writeClipboard(text) {
   if (window.isSecureContext && navigator.clipboard) {
@@ -719,26 +756,8 @@ $("copySel").addEventListener("click", async () => {
 $("copyClose").addEventListener("click", () => { copyScrim.hidden = true; });
 copyScrim.addEventListener("click", e => { if (e.target === copyScrim) copyScrim.hidden = true; });
 
-$("pasteBtn").addEventListener("click", async () => {
-  // Pasted text lands in the compose box first, so it can be checked before it is sent
-  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.readText) {
-    try {
-      const t = await navigator.clipboard.readText();
-      if (t) {
-        box.value = box.value ? box.value + (box.value.endsWith("\n") ? "" : "\n") + t : t;
-        growBox(); store.set("wt.draft", box.value); box.focus();
-        notice("Pasted into the message box. Tap Send to send it.");
-        return;
-      }
-    } catch {}
-  }
-  box.focus();
-  notice("Press and hold the message box, then tap Paste");
-});
-
 // ---------------------------------------------------------------- font size
-onTap($("fontDown"), () => setFont(fontSize - 1));
-onTap($("fontUp"), () => setFont(fontSize + 1));
+// Phones pinch with two fingers; desktops use Ctrl + / Ctrl - / Ctrl 0
 addEventListener("keydown", e => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
   if (e.key === "=" || e.key === "+") { e.preventDefault(); setFont(fontSize + 1); }
@@ -750,7 +769,6 @@ addEventListener("keydown", e => {
 const DEFAULT_QUICK = [
   { label: "claude", text: "claude", act: "run" },
   { label: "Commit and push", text: "commit and push", act: "run" },
-  { label: "Dashboard", text: "@dashboard", act: "open" },
 ];
 let quick = store.get("wt.quick", null);
 if (!Array.isArray(quick)) quick = DEFAULT_QUICK.map(q => ({ ...q }));
@@ -871,7 +889,7 @@ renderQuick();
 
 // ---------------------------------------------------------------- layout: keyboard and rotation
 const app = $("app");
-let baseH = innerHeight, baseW = innerWidth;
+let baseH = innerHeight, baseW = innerWidth, wasKb = false;
 function layout() {
   const vv = window.visualViewport;
   const h = vv ? vv.height : innerHeight;
@@ -879,8 +897,14 @@ function layout() {
   app.style.height = h + "px";
   app.style.transform = vv && vv.offsetTop ? `translateY(${vv.offsetTop}px)` : "";
   // keyboard open: the visible area is much shorter than the window
-  app.classList.toggle("kb", coarse && baseH - h > 120);
+  const kb = coarse && baseH - h > 120;
+  // The keyboard was closed with the phone's back button or its own hide key: drop focus too, so a later tap
+  // on a key (Esc, arrows...) cannot bring it back up
+  if (wasKb && !kb && document.activeElement === term.textarea) term.textarea.blur();
+  wasKb = kb;
+  app.classList.toggle("kb", kb);
   refit();
+  queueMirror();
 }
 if (window.visualViewport) {
   visualViewport.addEventListener("resize", layout);
@@ -892,6 +916,19 @@ addEventListener("resize", () => { if (innerWidth !== baseW) { baseW = innerWidt
 new ResizeObserver(refit).observe($("term"));
 layout();
 
+// Keyboard button (phones): shows or hides the keyboard for typing into the terminal
+const kbdBtn = $("kbdBtn");
+function renderKbd() {
+  const on = document.activeElement === term.textarea;
+  kbdBtn.classList.toggle("on", on);
+  kbdBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  kbdBtn.textContent = on ? "Hide keyboard" : "Keyboard";
+}
+onTap(kbdBtn, () => {
+  if (document.activeElement === term.textarea) term.textarea.blur(); else focusTerm();
+  renderKbd();
+});
+
 // fade the edge of a sideways row while there is more of it to see
 function markMore(el) { el.classList.toggle("more", el.scrollLeft + el.clientWidth < el.scrollWidth - 4); }
 for (const el of document.querySelectorAll(".scroller")) {
@@ -900,15 +937,15 @@ for (const el of document.querySelectorAll(".scroller")) {
   new MutationObserver(() => markMore(el)).observe(el, { childList: true });
 }
 if (term.textarea) {
-  term.textarea.addEventListener("focus", () => app.classList.add("termfocus"));
-  term.textarea.addEventListener("blur", () => app.classList.remove("termfocus"));
+  term.textarea.addEventListener("focus", () => { app.classList.add("termfocus"); renderKbd(); });
+  term.textarea.addEventListener("blur", () => { app.classList.remove("termfocus"); renderKbd(); });
 }
 
 connect();
 if (!coarse) term.focus();
-if (coarse && !store.get("wt.hint1", false)) {
-  setTimeout(() => notice("Drag the terminal to scroll. Tap it to type."), 1200);
-  store.set("wt.hint1", true);
+if (coarse && !store.get("wt.hint2", false)) {
+  setTimeout(() => notice("Drag to scroll · tap to type · hold to select text", 5000), 1200);
+  store.set("wt.hint2", true);
 }
 
 // For tests and debugging from the console
