@@ -18,8 +18,9 @@ Snapshot of the reference instance this guide reproduces (updated 2026-10-04):
 | ComfyUI | `/workspace/ComfyUI`, venv `/venv/comfy`, service `comfyui` on `127.0.0.1:18188` (**starts on demand**, not at boot), portal `ComfyUI` `10200` → `18188` (step 9) |
 | Video models | `/workspace/ComfyUI/models` (~80 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan 2.2 Animate + pose models) |
 | Disk | **≥ 300 GB** (Qwen ~75 GB + video models ~80 GB + two venvs ~20 GB + outputs) |
-| Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor) |
-| Claude extras | `~/.claude/settings.json`, 13 skills, 2 memories (step 7) |
+| Setup dashboard | `deploy/dashboard` (stdlib Python), service `obscura-dashboard` on `127.0.0.1:16060`, portal `Setup Dashboard` `6006` → `16060`. Started first by `provision.sh`; shows phases, every download, network, disk, GPU, services and the log. Takes Tensorboard's port (Tensorboard is removed from `/etc/portal.yaml`) |
+| Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor); the dashboard reuses Tensorboard's **6006** |
+| Claude extras | `~/.claude/settings.json`, 14 skills, 2 memories (step 7) |
 
 Ground rules while doing this:
 - Read `/workspace/CLAUDE.md` (Vast instance guide) first if you haven't — supervisor, Caddy and

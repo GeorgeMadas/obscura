@@ -16,6 +16,46 @@ export PATH="/root/.local/bin:$PATH" HOME=/root
 until [ -d /workspace ] && supervisorctl pid >/dev/null 2>&1; do sleep 5; done
 log "Vast entrypoint is up, provisioning"
 
+# Setup dashboard (deploy/dashboard): live phases, downloads, network, disk, GPU and services on portal port 6006.
+# Starts first so it sees every download. Its files come straight from main, because the repo may not be cloned yet.
+# No port is free in the template, so it takes Tensorboard's (unused here): Tensorboard leaves /etc/portal.yaml
+# and self-skips from then on.
+DASH=/opt/obscura-dashboard
+mkdir -p "$DASH"
+for f in dashboard/server.py dashboard/index.html service/obscura-dashboard.sh service/obscura-dashboard.conf; do
+  curl -fsSL -H "Authorization: token $GITHUB_TOKEN" -o "$DASH/${f##*/}.new" \
+    "https://raw.githubusercontent.com/GeorgeMadas/obscura/main/deploy/$f" \
+    && mv "$DASH/${f##*/}.new" "$DASH/${f##*/}" \
+    || { rm -f "$DASH/${f##*/}.new"; [ -f "$APP/deploy/$f" ] && cp "$APP/deploy/$f" "$DASH/"; }
+done
+if [ -s "$DASH/server.py" ] && [ -s "$DASH/obscura-dashboard.conf" ]; then
+  install -m 755 "$DASH/obscura-dashboard.sh" /opt/supervisor-scripts/obscura-dashboard.sh
+  cp "$DASH/obscura-dashboard.conf" /etc/supervisor/conf.d/obscura-dashboard.conf
+  python3 - <<'EOF'
+import os, yaml
+p = "/etc/portal.yaml"
+d = yaml.safe_load(open(p)) or {}
+apps = d.setdefault("applications", {})
+changed = apps.pop("Tensorboard", None) is not None
+if "Setup Dashboard" not in apps:
+    apps["Setup Dashboard"] = {"hostname": "localhost", "external_port": 6006, "internal_port": 16060,
+                               "open_path": "/", "name": "Setup Dashboard"}
+    changed = True
+if changed:
+    tmp = p + ".tmp"
+    yaml.safe_dump(d, open(tmp, "w"), sort_keys=False)
+    os.replace(tmp, p)
+    print("portal: Setup Dashboard on 6006")
+EOF
+  supervisorctl stop tensorboard >/dev/null 2>&1
+  supervisorctl reread >/dev/null && supervisorctl update
+  supervisorctl restart obscura-dashboard >/dev/null  # pick up new files when it was already running
+  supervisorctl restart caddy >/dev/null
+  log "Setup dashboard running (portal port 6006)"
+else
+  log "Setup dashboard download FAILED - continuing without it"
+fi
+
 # 0. Repo
 if [ ! -f "$APP/app.py" ]; then
   log "Cloning repo"
