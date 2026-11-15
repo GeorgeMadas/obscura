@@ -703,17 +703,17 @@ addEventListener("keydown", e => {
 const DEFAULT_QUICK = [
   { label: "claude", text: "claude", act: "run" },
   { label: "Commit and push", text: "commit and push", act: "run" },
-  { label: "Setup log", text: "tail -n 80 -f /var/log/obscura-provision.log", act: "run" },
   { label: "Dashboard", text: "@dashboard", act: "open" },
 ];
 let quick = store.get("wt.quick", null);
 if (!Array.isArray(quick)) quick = DEFAULT_QUICK.map(q => ({ ...q }));
 const saveQuick = () => store.set("wt.quick", quick);
-// One-time cleanup: drop the old "claude --continue" default from saved button lists.
-if (!store.get("wt.quick.noContinue", false)) {
-  const kept = quick.filter(q => !(q && q.text === "claude --continue"));
+// One-time cleanup: drop retired defaults ("claude --continue", "Setup log") from saved button lists.
+if (!store.get("wt.quick.cleanup2", false)) {
+  const retired = ["claude --continue", "tail -n 80 -f /var/log/obscura-provision.log"];
+  const kept = quick.filter(q => !(q && retired.includes(q.text)));
   if (kept.length !== quick.length) { quick = kept; saveQuick(); }
-  store.set("wt.quick.noContinue", true);
+  store.set("wt.quick.cleanup2", true);
 }
 
 function dashboardUrl() {
