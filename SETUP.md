@@ -19,7 +19,8 @@ Snapshot of the reference instance this guide reproduces (updated 2026-10-04):
 | Video models | `/workspace/ComfyUI/models` (~80 GB: Wan 2.2 I2V 14B, TI2V 5B, Wan 2.2 Animate + pose models) |
 | Disk | **≥ 300 GB** (Qwen ~75 GB + video models ~80 GB + two venvs ~20 GB + outputs) |
 | Setup dashboard | `deploy/dashboard` (stdlib Python), service `obscura-dashboard` on `127.0.0.1:16060`, portal `Setup Dashboard` `6006` → `16060`. Started first by `provision.sh`; shows phases, every download, network, disk, GPU, services and the log. Takes Tensorboard's port (Tensorboard is removed from `/etc/portal.yaml`) |
-| Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor); the dashboard reuses Tensorboard's **6006** |
+| Web terminal | `deploy/terminal`: ttyd 1.7.7 (static binary) + tmux session `main`, service `obscura-terminal` on `127.0.0.1:17681`, portal `Web Terminal` `8384` → `17681`. Phone key bar (Esc, Shift+Tab, sticky Ctrl/Alt, arrows, Home/End, PgUp/PgDn, ^C/^D/^R/^L), compose box for dictation, editable quick buttons. Started right after the dashboard by `provision.sh`; ttyd and tmux are in the Dockerfile with a fallback install. Takes Syncthing's port (Syncthing is removed from `/etc/portal.yaml`). Inside tmux, Claude Code's Ctrl+B is pressed twice (Ctrl+B is the tmux prefix) |
+| Open ports | the template must open **10100** (Obscura) and **10200** (ComfyUI editor); the dashboard reuses Tensorboard's **6006** and the web terminal Syncthing's **8384** |
 | Claude extras | `~/.claude/settings.json`, 14 skills, 2 memories (step 7) |
 
 Ground rules while doing this:

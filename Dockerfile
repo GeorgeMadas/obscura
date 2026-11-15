@@ -3,7 +3,7 @@
 # Bakes in the slow, rarely-changing parts so a new instance skips ~20 min of installs:
 #   - Obscura's Python packages and the prompt-rewriter kernels in /venv/main
 #   - ComfyUI + the pinned custom node packs in /opt/ComfyUI, with its own venv /venv/comfy
-#   - Claude Code
+#   - Claude Code, plus ttyd and tmux for the web terminal (deploy/terminal)
 #
 # Deliberately NOT in the image (see SETUP.md "Custom Docker image"):
 #   - the app code: deploy/provision.sh clones / fast-forwards GeorgeMadas/obscura into /workspace/qwen-image
@@ -23,6 +23,12 @@ WORKDIR /opt/obscura
 # 1. Claude Code (changes least often, so it sits in the lowest layer)
 RUN curl -fsSL https://claude.ai/install.sh | bash \
  && ln -sf /root/.local/bin/claude /usr/local/bin/claude
+
+# 1b. Web terminal (deploy/terminal): tmux + the static ttyd binary (pinned, checksum-verified)
+RUN (command -v tmux >/dev/null || (apt-get update && apt-get install -y --no-install-recommends tmux && rm -rf /var/lib/apt/lists/*)) \
+ && curl -fsSL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 \
+ && echo "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55  /usr/local/bin/ttyd" | sha256sum -c \
+ && chmod 755 /usr/local/bin/ttyd && ttyd --version
 
 # 2. Prompt-rewriter kernels. causal-conv1d compiles against the base image's torch; keep MAX_JOBS low so the
 #    CI runner doesn't run out of RAM. If the build fails, provision.sh installs it at boot instead.
