@@ -702,7 +702,6 @@ addEventListener("keydown", e => {
 // ---------------------------------------------------------------- quick buttons
 const DEFAULT_QUICK = [
   { label: "claude", text: "claude", act: "run" },
-  { label: "claude --continue", text: "claude --continue", act: "run" },
   { label: "Commit and push", text: "commit and push", act: "run" },
   { label: "Setup log", text: "tail -n 80 -f /var/log/obscura-provision.log", act: "run" },
   { label: "Dashboard", text: "@dashboard", act: "open" },
@@ -710,6 +709,12 @@ const DEFAULT_QUICK = [
 let quick = store.get("wt.quick", null);
 if (!Array.isArray(quick)) quick = DEFAULT_QUICK.map(q => ({ ...q }));
 const saveQuick = () => store.set("wt.quick", quick);
+// One-time cleanup: drop the old "claude --continue" default from saved button lists.
+if (!store.get("wt.quick.noContinue", false)) {
+  const kept = quick.filter(q => !(q && q.text === "claude --continue"));
+  if (kept.length !== quick.length) { quick = kept; saveQuick(); }
+  store.set("wt.quick.noContinue", true);
+}
 
 function dashboardUrl() {
   if (!/^\d+$/.test(DASHBOARD_PORT)) return "";
@@ -786,7 +791,7 @@ function showQuickList(confirmReset = false) {
 function showQuickForm(i) {
   const q = i >= 0 ? quick[i] : { label: "", text: "", act: "run" };
   quickBody.textContent = "";
-  const label = h("input", { value: q.label, required: true, maxLength: 40, placeholder: "claude --continue" });
+  const label = h("input", { value: q.label, required: true, maxLength: 40, placeholder: "Button name" });
   const text = h("textarea", { value: q.text, required: true, placeholder: "The command, the message for Claude, or a link", spellcheck: false });
   const act = h("select", {}, ...Object.entries(ACTS).map(([v, t]) => h("option", { value: v, textContent: t, selected: v === q.act })));
   const hint = h("p", { className: "hint" });
