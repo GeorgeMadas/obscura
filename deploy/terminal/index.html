@@ -412,8 +412,12 @@ const toBottom = $("toBottom");
 function showToBottom() { toBottom.hidden = scrolled <= 0; }
 function scrollLines(n) {
   if (!n || !live()) return;
-  if (n > 0) { n = Math.min(n, MAX_STEPS - scrolled); if (n > 0) { sendRaw(K_UP.repeat(n)); scrolled += n; } }
-  else { const m = Math.min(-n, Math.max(scrolled, 0)); if (m) sendRaw(K_DOWN.repeat(m)); scrolled -= m; }
+  // Never limit by the page's own count: the app may not move the same distance up and down, so a capped
+  // count stopped scrolling down short of the bottom. Extra "down" steps at the bottom do nothing.
+  if (n > 0) { sendRaw(K_UP.repeat(n)); scrolled = Math.min(scrolled + n, MAX_STEPS); }
+  // The count is only a guess, so "Jump to bottom" stays up until it is used (or you type), never hiding
+  // while the view may still be short of the bottom
+  else { sendRaw(K_DOWN.repeat(-n)); if (scrolled > 0) scrolled = Math.max(scrolled + n, 1); }
   showToBottom();
 }
 // tmux.conf turns this into Ctrl+End for Claude Code (its "scroll to bottom") or leaves copy mode in a shell
@@ -494,7 +498,7 @@ function layerSelection() {
         v *= 0.93; a += v;
         const cell = stepHeight(), n = Math.trunc(a / cell);
         if (n) { a -= n * cell; scrollLines(n); }
-        if (Math.abs(v) > 0.6 && !(v < 0 && scrolled <= 0)) raf = requestAnimationFrame(step);
+        if (Math.abs(v) > 0.6) raf = requestAnimationFrame(step);
       };
       if (Math.abs(v) > 2) raf = requestAnimationFrame(step);
     } else if (mode === "maybe" && e.type === "touchend" && e.timeStamp - t0 < 450) {
