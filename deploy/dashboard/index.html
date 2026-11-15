@@ -183,7 +183,8 @@ summary:focus-visible, button:focus-visible { outline: 2px solid var(--safelight
   .hero { margin-top: 30px; }
   .brand span { display: none; }
   .row { grid-template-columns: minmax(0, 1fr) auto; }
-  .row .size { grid-column: 2; }
+  .row .name b, .row .name span { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+  .row .size { grid-column: 2; align-self: start; }
   .row .speed { grid-column: 1; text-align: left; }
   .row .eta { grid-column: 2; }
   .row.fin { grid-template-columns: minmax(0, 1fr) auto; }
