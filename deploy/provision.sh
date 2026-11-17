@@ -21,7 +21,7 @@ log "Vast entrypoint is up, provisioning"
 # No port is free in the template, so it takes Tensorboard's (unused here): Tensorboard leaves /etc/portal.yaml
 # and self-skips from then on.
 # fetch_deploy <dir> <deploy/ paths...>: download each file from main into <dir> (keeping any subfolder after the
-# first path segment, e.g. terminal/vendor/x.js -> <dir>/vendor/x.js), falling back to the local clone
+# first path segment, e.g. dashboard/server.py -> <dir>/server.py), falling back to the local clone
 fetch_deploy(){
   local dir=$1 f rel; shift
   for f in "$@"; do
@@ -62,51 +62,13 @@ else
   log "Setup dashboard download FAILED - continuing without it"
 fi
 
-# Web terminal (deploy/terminal): ttyd + tmux session "main" with a phone key bar, on portal port 8384.
-# Independent of the models and the app, so it is usable while the rest is still installing.
-# No port is free in the template, so it takes Syncthing's (no shared folders or devices here):
-# Syncthing leaves /etc/portal.yaml and self-skips from then on.
-command -v tmux >/dev/null || { apt-get update -qq && apt-get install -y -qq tmux >/dev/null; } || log "tmux install FAILED"
-if ! command -v ttyd >/dev/null; then
-  # Static binary, same pin and checksum as the Dockerfile
-  curl -fsSL -o /tmp/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 \
-    && echo "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55  /tmp/ttyd" | sha256sum -c --quiet \
-    && install -m 755 /tmp/ttyd /usr/local/bin/ttyd || log "ttyd install FAILED"
-  rm -f /tmp/ttyd
-fi
-TERMDIR=/opt/obscura-terminal
-fetch_deploy "$TERMDIR" terminal/index.html terminal/build.py terminal/attach.sh terminal/tmux.conf \
-  terminal/vendor/xterm.js terminal/vendor/xterm.css terminal/vendor/addon-fit.js terminal/vendor/addon-webgl.js \
-  terminal/vendor/addon-unicode11.js terminal/vendor/addon-web-links.js \
-  service/obscura-terminal.sh service/obscura-terminal.conf
-if command -v ttyd >/dev/null && command -v tmux >/dev/null && [ -s "$TERMDIR/vendor/xterm.js" ] && [ -s "$TERMDIR/obscura-terminal.conf" ]; then
-  chmod +x "$TERMDIR/attach.sh"
-  install -m 755 "$TERMDIR/obscura-terminal.sh" /opt/supervisor-scripts/obscura-terminal.sh
-  cp "$TERMDIR/obscura-terminal.conf" /etc/supervisor/conf.d/obscura-terminal.conf
-  python3 - <<'EOF'
-import os, yaml
-p = "/etc/portal.yaml"
-d = yaml.safe_load(open(p)) or {}
-apps = d.setdefault("applications", {})
-changed = apps.pop("Syncthing", None) is not None
-if "Web Terminal" not in apps:
-    apps["Web Terminal"] = {"hostname": "localhost", "external_port": 8384, "internal_port": 17681,
-                            "open_path": "/", "name": "Web Terminal"}
-    changed = True
-if changed:
-    tmp = p + ".tmp"
-    yaml.safe_dump(d, open(tmp, "w"), sort_keys=False)
-    os.replace(tmp, p)
-    print("portal: Web Terminal on 8384")
-EOF
-  supervisorctl stop syncthing >/dev/null 2>&1
-  supervisorctl reread >/dev/null && supervisorctl update
-  supervisorctl restart obscura-terminal >/dev/null  # pick up new files when it was already running
-  supervisorctl restart caddy >/dev/null
-  log "Web terminal running (portal port 8384)"
-else
-  log "Web terminal setup FAILED - continuing without it"
-fi
+# Web terminal (GeorgeMadas/web-terminal, shared with Cliffhanger): ttyd + tmux session "main" with a phone key
+# bar, on portal port 8384 (in Syncthing's slot, unused here). Independent of the models and the app, so it is
+# usable while the rest is still installing. Its install.sh does the whole setup and is safe to re-run.
+curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/GeorgeMadas/web-terminal/main/install.sh \
+  | WT_TITLE="Obscura terminal" bash \
+  || log "Web terminal setup FAILED - continuing without it"
 
 # 0. Repo
 if [ ! -f "$APP/app.py" ]; then

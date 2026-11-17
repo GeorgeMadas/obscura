@@ -35,7 +35,7 @@ LOG = Path("/var/log/obscura-provision.log")
 DONE_MARKER = WORKSPACE / ".obscura-provisioned"
 RUN_START = "Vast entrypoint is up, provisioning"
 RUN_DONE = "Provisioning complete"
-SERVICES = {"qwen-image": 17860, "comfyui": 18188}  # supervisor program -> internal port
+SERVICES = {"qwen-image": 17860, "comfyui": 18188, "web-terminal": 17681}  # supervisor program -> internal port
 SMALL = 1 << 20  # files under 1 MB (configs, tokenizers) are counted but not listed one by one
 
 # ---------------------------------------------------------------- secret masking

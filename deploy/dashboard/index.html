@@ -447,7 +447,7 @@ function renderMachine(d) {
 }
 
 function renderServices(list) {
-  const port = { "qwen-image": "Obscura, portal port 10100", comfyui: "ComfyUI editor, portal port 10200" };
+  const port = { "qwen-image": "Obscura, portal port 10100", comfyui: "ComfyUI editor, portal port 10200", "web-terminal": "Web Terminal, portal port 8384" };
   $("services").innerHTML = (list || []).map(s => {
     let cls = "", txt = s.state.toLowerCase();
     if (s.state === "RUNNING") { cls = s.listening ? "up" : "warm"; txt = s.listening ? "Ready" + (s.uptime ? ", up " + s.uptime : "") : "Starting up"; }
